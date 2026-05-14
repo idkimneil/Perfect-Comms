@@ -5,6 +5,10 @@
   Clean in-game voice, role-aware mute rules, protected lobbies, and one-click voice lobby discovery.
 </p>
 
+<p align="center">
+  <img src="assets/brand/divider.svg" alt="divider" width="900">
+</p>
+
 Perfect Comms is a native Among Us voice-chat mod made for serious TOU-Mira lobbies. No separate app. No awkward setup. No voice rules getting ignored. Just launch, join, and play with voice that matches the game.
 
 ## Why Perfect Comms
@@ -59,3 +63,7 @@ For GitHub release uploads, use `PerfectComms.dll` for Windows and `PerfectComms
 ## Notice
 
 Perfect Comms is an unofficial mod. It is not affiliated with Innersloth, Among Us, BepInEx, MiraAPI, Reactor, or TOU-Mira.
+
+<p align="center">
+  <img src="assets/brand/divider.svg" alt="divider" width="900">
+</p>
