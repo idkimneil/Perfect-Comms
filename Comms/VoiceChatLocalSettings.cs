@@ -277,8 +277,8 @@ public class VoiceChatLocalSettings : LocalSettingsTab
             new ConfigDescription("Show Perfect Comms update notifications on the main menu"));
 
         UpdateNotificationUrl = config.Bind("Updates", "NotificationUrl",
-            "https://perfect-comms-lobbies.edgetel.workers.dev/updates/latest",
-            new ConfigDescription("Perfect Comms update notification endpoint"));
+            "https://api.github.com/repos/artriy/Perfect-Comms/releases/latest",
+            new ConfigDescription("Perfect Comms GitHub latest-release API endpoint"));
 
         ShowTestUpdateNotifications = config.Bind("Updates", "ShowTestNotifications", false,
             new ConfigDescription("Reserved for local update notification testing"));

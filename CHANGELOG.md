@@ -1,5 +1,16 @@
 # Changelog
 
+## Perfect Comms v1.0.1
+
+### Changed
+
+- Update notifications now check GitHub releases directly for future releases.
+
+### Fixed
+
+- Speaking indicators now render above the Among Us game UI instead of being hidden behind menus or scene elements.
+- Speaking-ring player icons now show a stable recolored crewmate body with loaded cosmetics, without cloning live player objects.
+
 ## Perfect Comms v1.0.0
 
 **PUBLIC BETA — expect bugs.**  
