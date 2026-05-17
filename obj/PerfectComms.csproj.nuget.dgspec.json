@@ -21,8 +21,8 @@
           "net6.0"
         ],
         "sources": {
-          "https://bepinex.dev": {},
-          "https://nuget.org": {},
+          "https://api.nuget.org/v3/index.json": {},
+          "https://nuget.bepinex.dev/v3/index.json": {},
           "https://nuget.reactor.gg/v3/index.json": {}
         },
         "frameworks": {

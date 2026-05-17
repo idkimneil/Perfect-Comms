@@ -81,7 +81,7 @@ public static class PingTrackerPatch
     private static GameObject?       _barRoot;
     private static AspectPosition?   _barAspect;
     private static bool              _layoutVertical;
-    private static SpeakingBarPosition _barPosition = SpeakingBarPosition.TopRight;
+    private static SpeakingBarPosition _barPosition = SpeakingBarPosition.TopMiddle;
     private static readonly Dictionary<byte, SpeakerSlot> _slots = new();
     private static readonly HashSet<byte> _activeSpeakerIds = new();
     private static readonly Dictionary<byte, float> _activeSpeakerLevels = new();
@@ -294,7 +294,7 @@ public static class PingTrackerPatch
                 asp.Alignment        = AspectPosition.EdgeAlignments.RightBottom;
                 asp.DistanceFromEdge = new Vector3(1.2f, 0.35f, 0f);
                 break;
-            default:
+            default: // TopLeft
                 asp.Alignment        = AspectPosition.EdgeAlignments.LeftTop;
                 asp.DistanceFromEdge = new Vector3(0.60f, 0.25f, 0f);
                 break;

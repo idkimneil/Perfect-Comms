@@ -27,6 +27,10 @@ public enum SpkDeviceEnum
     Device9   =  9, Device10  = 10
 }
 
+// IndicatorPosition and SpeakingBarPosition are kept so existing config entries
+// and PingTrackerPatch references continue to compile. The button layout itself
+// is now handled by the TOU-Mira GridArrange; IndicatorPosition is no longer
+// applied to anything at runtime.
 public enum IndicatorPosition
 {
     TopLeft     = 0,
@@ -105,6 +109,8 @@ public class VoiceChatLocalSettings : LocalSettingsTab
     public ConfigEntry<SpkDeviceEnum> SpeakerDeviceIndex { get; }
 #endif
 
+    // IndicatorPosition setting kept for config-file compatibility; no longer
+    // drives button placement (grid handles that now).
     [LocalEnumSetting("Indicator Position")]
     public ConfigEntry<IndicatorPosition> VoiceIndicatorPosition { get; }
 
@@ -243,21 +249,22 @@ public class VoiceChatLocalSettings : LocalSettingsTab
         };
 #endif
 
+        // Kept for config-file compatibility; no longer drives button placement.
         VoiceIndicatorPosition = config.Bind("UI", "VoiceIndicatorPosition",
             IndicatorPosition.BottomRight,
-            new ConfigDescription("Position of the mic/speaker HUD buttons"));
+            new ConfigDescription("(Legacy) Position of the mic/speaker HUD buttons"));
 
         SpeakingBarPosition = config.Bind("UI", "SpeakingBarPosition",
             VoiceChatPlugin.VoiceChat.SpeakingBarPosition.TopMiddle,
             new ConfigDescription("Position of the speaking bar"));
 
-        // Meeting overlay — on by default.
         MeetingSpeakingOverlay = config.Bind("UI", "MeetingSpeakingOverlay", true,
             new ConfigDescription(
                 "Show smooth coloured rings and card glows around talking players during meetings"));
 
+        // Kept for config-file compatibility; no longer drives button scale.
         OverlayScale = config.Bind("UI", "OverlayScale", 1f,
-            new ConfigDescription("Scale for voice HUD buttons",
+            new ConfigDescription("(Legacy) Scale for voice HUD buttons",
                 new AcceptableValueRange<float>(0.75f, 1.50f)));
 
         DebugVoiceStats = config.Bind("Debug", "DebugVoiceStats", false,
@@ -377,17 +384,9 @@ public class VoiceChatLocalSettings : LocalSettingsTab
             VoiceChatRoom.Current?.SetSpeaker(SpeakerDevice);
         }
 #endif
-        else if (configEntry == VoiceIndicatorPosition)
-        {
-            VoiceChatHudState.ApplyIndicatorPosition(VoiceIndicatorPosition.Value);
-        }
         else if (configEntry == SpeakingBarPosition)
         {
             PingTrackerPatch.ApplySpeakingBarPosition(SpeakingBarPosition.Value);
-        }
-        else if (configEntry == OverlayScale)
-        {
-            VoiceChatHudState.ApplyOverlayScale(OverlayScale.Value);
         }
         else if (configEntry == StartMuted)
         {
@@ -397,6 +396,9 @@ public class VoiceChatLocalSettings : LocalSettingsTab
         {
             VoiceChatHudState.SetSpeakerMuted(StartDeafened.Value);
         }
+        // VoiceIndicatorPosition and OverlayScale are kept in config for
+        // backwards compatibility but no longer drive any runtime behaviour;
+        // button layout is managed by the TOU-Mira GridArrange.
     }
 }
 

@@ -195,4 +195,3 @@ internal static class VoiceLobbyRegistryPublisher
             request.Region,
             request.ProtocolVersion);
 }
-
