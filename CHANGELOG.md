@@ -1,5 +1,15 @@
 # Changelog
 
+## Perfect Comms v2.0.1
+
+### What's Changed
+
+- Changed the assets to a cleaner version by @AtonyGit in #1.
+- Fixed the Voice Lobbies close X so it sits in a clearer top-right position and is easier to see.
+- Fixed bottom-positioned speaking indicators so player names no longer clip off the bottom of the screen while staying close to the edge.
+
+See `docs/release-notes-v2.0.1.md` for the full release notes.
+
 ## Perfect Comms v2.0.0
 
 This is the backend rewrite release. Perfect Comms no longer depends on Among Us RPCs for voice audio transport. Voice now runs through selectable voice backends, with BetterCrewLink live voice as the default path and Interstellar available as an alternate backend.
