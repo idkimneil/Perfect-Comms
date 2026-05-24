@@ -356,7 +356,7 @@ internal static class VoiceLobbyBrowserUi
         /*var closeTextOffset = new Vector3(2.9f, 3.05f, 0f);*/
 
         CreateTextButton("CloseX", _panelRoot.transform, new Vector3(2.2f, 1.5f, -0.2f),
-            new Vector2(8f, 8f), "X", ClosePanel, transparentBackground: true);
+            new Vector2(0.72f, 0.72f), "X", ClosePanel, transparentBackground: true);
         CreateTextButton("Refresh", _panelRoot.transform, new Vector3(-2.05f, -1.35f, -0.2f),
             new Vector2(1.08f, 0.44f), "Refresh", () => Refresh());
         CreateTextButton("Source", _panelRoot.transform, new Vector3(-2.55f, 1.28f, -0.2f),
