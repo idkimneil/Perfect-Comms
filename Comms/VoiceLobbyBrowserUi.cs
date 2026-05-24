@@ -21,7 +21,6 @@ internal static class VoiceLobbyBrowserUi
     private const float PanelPrewarmDelaySeconds = 0.10f;
     private static GameObject? _buttonObj;
     private static GameObject? _buttonVisualObj;
-    private static float _buttonVisualYOffset;
     private static GameObject? _panelRoot;
     private static GameObject? _rowsRoot;
     private static TextMeshPro? _statusText;
@@ -354,9 +353,10 @@ internal static class VoiceLobbyBrowserUi
 
         _rowsRoot = new GameObject("Rows");
         _rowsRoot.transform.SetParent(_panelRoot.transform, false);
+        /*var closeTextOffset = new Vector3(2.9f, 3.05f, 0f);*/
 
-        CreateTextButton("CloseX", _panelRoot.transform, new Vector3(2.26f, 1.43f, -0.2f),
-            new Vector2(0.72f, 0.72f), "X", ClosePanel, transparentBackground: true);
+        CreateTextButton("CloseX", _panelRoot.transform, new Vector3(2.2f, 1.5f, -0.2f),
+            new Vector2(8f, 8f), "X", ClosePanel, transparentBackground: true);
         CreateTextButton("Refresh", _panelRoot.transform, new Vector3(-2.05f, -1.35f, -0.2f),
             new Vector2(1.08f, 0.44f), "Refresh", () => Refresh());
         CreateTextButton("Source", _panelRoot.transform, new Vector3(-2.55f, 1.28f, -0.2f),
@@ -795,7 +795,7 @@ internal static class VoiceLobbyBrowserUi
         if (isCloseButton)
         {
             var outline = CreateText("TextOutline", go.transform, new Vector3(closeTextOffset.x, closeTextOffset.y, -0.21f), label,
-                1.85f, TextAlignmentOptions.Center, SortBase + 3);
+                3f, TextAlignmentOptions.Center, SortBase + 3);
             outline.transform.localScale = new Vector3(1f / backgroundScale.x, 1f / backgroundScale.y, 1f);
             outline.fontStyle = FontStyles.Bold;
             outline.characterSpacing = 0f;
@@ -806,7 +806,7 @@ internal static class VoiceLobbyBrowserUi
             ? new Vector3(closeTextOffset.x, closeTextOffset.y, -0.2f)
             : new Vector3(0f, 0.01f, -0.2f);
         var txt = CreateText("Text", go.transform, textPosition, label,
-            isCloseButton ? 1.62f : isSourceButton ? 0.68f : transparentBackground ? 0.86f : 0.78f, TextAlignmentOptions.Center, SortBase + 4);
+            isCloseButton ? 2.627f : isSourceButton ? 0.68f : transparentBackground ? 0.86f : 0.78f, TextAlignmentOptions.Center, SortBase + 4);
         txt.transform.localScale = new Vector3(1f / backgroundScale.x, 1f / backgroundScale.y, 1f);
         txt.fontStyle = FontStyles.Bold;
         txt.characterSpacing = transparentBackground ? 0f : 0.6f;
@@ -860,30 +860,10 @@ internal static class VoiceLobbyBrowserUi
             sr.sortingOrder = SortBase + 7;
         }
 
-        FitButtonArtToClone();
+        _buttonVisualObj.transform.localScale =  new Vector3(5.4f, 5.4f, 1f);
         _buttonVisualObj.SetActive(_buttonObj.activeSelf && !_panelVisible && !_panelClosing);
         _buttonVisualObj.transform.SetParent(menu.PlayOnlineButton.transform.parent, false);
-        _buttonVisualObj.transform.localPosition = _buttonObj.transform.localPosition + new Vector3(0f, _buttonVisualYOffset, -0.5f);
-    }
-
-    private static void FitButtonArtToClone()
-    {
-        if (_buttonObj == null || _buttonVisualObj == null || _voiceButtonSprite == null) return;
-
-        var spriteSize = _voiceButtonSprite.bounds.size;
-        if (spriteSize.x <= 0f || spriteSize.y <= 0f) return;
-
-        float targetWidth = 0.95f;
-        float baseHeight = 3.55f;
-        if (TryGetColliderBounds(_buttonObj, out var buttonBounds) || TryGetRendererBounds(_buttonObj, out buttonBounds))
-        {
-            targetWidth = buttonBounds.size.x;
-            baseHeight = buttonBounds.size.y;
-        }
-
-        float targetHeight = baseHeight * VoiceButtonHeightScale;
-        _buttonVisualYOffset = (targetHeight - baseHeight) * 0.5f;
-        _buttonVisualObj.transform.localScale = new Vector3(targetWidth / spriteSize.x, targetHeight / spriteSize.y, 1f);
+        _buttonVisualObj.transform.localPosition = _buttonObj.transform.localPosition + new Vector3(0f, 0.175f, -0.5f);
     }
 
     private static bool TryGetColliderBounds(GameObject obj, out Bounds bounds)
