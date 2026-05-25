@@ -86,6 +86,12 @@
 		<EmbeddedResource Include="Libs\Interstellar.Messages.dll">
 			<LogicalName>Lib.Interstellar.Messages.dll</LogicalName>
 		</EmbeddedResource>
+		<EmbeddedResource Include="Libs\rnnoise.x64.dll">
+			<LogicalName>Lib.rnnoise.x64.dll</LogicalName>
+		</EmbeddedResource>
+		<EmbeddedResource Include="Libs\rnnoise.x86.dll">
+			<LogicalName>Lib.rnnoise.x86.dll</LogicalName>
+		</EmbeddedResource>
 		<EmbeddedResource Include="$(NuGetPackageRoot)sipsorcery\10.0.6\lib\net6.0\SIPSorcery.dll">
 			<LogicalName>Lib.SIPSorcery.dll</LogicalName>
 		</EmbeddedResource>

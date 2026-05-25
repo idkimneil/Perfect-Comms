@@ -1,4 +1,5 @@
 using System;
+using VoiceChatPlugin.VoiceChat;
 
 namespace VoiceChatPlugin.Audio;
 
@@ -9,18 +10,150 @@ internal readonly record struct MicFrameDecision(
     float Threshold,
     string Reason);
 
-internal sealed class MicPreprocessor
+internal readonly record struct NoiseSuppressionDiagnostics(
+    string State,
+    string LastError,
+    string NativePath,
+    int FrameSize,
+    int Attempts,
+    int ProcessedFrames,
+    int UnavailableFrames,
+    int Samples,
+    float InputPeak,
+    double InputRms,
+    float OutputPeak,
+    double OutputRms,
+    float SpeechProbabilityMax);
+
+internal sealed class MicPreprocessor : IDisposable
 {
     private const int HangoverFrames = 8;
     private const float MinimumTransmitGate = 0.0005f;
+
+    private readonly object _noiseSuppressionStatsLock = new();
     private int _hangoverFramesRemaining;
+    private RnNoiseSuppressor? _noiseSuppressor;
+    private string _noiseSuppressionState = "disabled";
+    private string _noiseSuppressionLastError = "none";
+    private string _noiseSuppressionNativePath = string.Empty;
+    private int _noiseSuppressionFrameSize;
+    private int _noiseSuppressionAttemptsSinceStats;
+    private int _noiseSuppressionProcessedFramesSinceStats;
+    private int _noiseSuppressionUnavailableFramesSinceStats;
+    private int _noiseSuppressionSamplesSinceStats;
+    private float _noiseSuppressionInputPeakSinceStats;
+    private float _noiseSuppressionOutputPeakSinceStats;
+    private double _noiseSuppressionInputSquareSumSinceStats;
+    private double _noiseSuppressionOutputSquareSumSinceStats;
+    private float _noiseSuppressionSpeechProbabilityMaxSinceStats;
 
     public void Reset()
     {
         _hangoverFramesRemaining = 0;
+        _noiseSuppressor?.Reset();
     }
 
     public float ProcessCaptureSample(float sample, float gain) => sample;
+
+    public void SetNoiseSuppressionEnabled(bool enabled)
+    {
+        if (enabled)
+        {
+            if (_noiseSuppressionState == "disabled")
+                SetNoiseSuppressionState("enabled-waiting-for-audio", "none", null);
+            return;
+        }
+
+        _noiseSuppressor?.Dispose();
+        _noiseSuppressor = null;
+        SetNoiseSuppressionState("disabled", "none", null);
+    }
+
+    public bool TryApplyNoiseSuppression(float[] pcm, int sampleCount)
+    {
+        var count = Math.Min(sampleCount, pcm.Length);
+        if (count <= 0) return false;
+
+        Measure(pcm, count, out var inputPeak, out var inputSquareSum);
+        if (_noiseSuppressor == null)
+        {
+            if (!RnNoiseSuppressor.TryCreate(out var suppressor, out var error))
+            {
+                SetNoiseSuppressionState("unavailable", error, null);
+                TrackNoiseSuppressionFrame(false, 0, true, count, inputPeak, inputSquareSum, inputPeak, inputSquareSum, 0f);
+                return false;
+            }
+
+            _noiseSuppressor = suppressor;
+            SetNoiseSuppressionState("ready", "none", suppressor);
+        }
+
+        var activeSuppressor = _noiseSuppressor;
+        if (activeSuppressor == null)
+        {
+            TrackNoiseSuppressionFrame(false, 0, true, count, inputPeak, inputSquareSum, inputPeak, inputSquareSum, 0f);
+            return false;
+        }
+
+        bool processed;
+        int processedFrames;
+        float speechProbabilityMax;
+        try
+        {
+            processed = activeSuppressor.TryProcessInPlace(pcm, count, out processedFrames, out speechProbabilityMax);
+        }
+        catch (Exception ex)
+        {
+            SetNoiseSuppressionState("process-error", ex.Message, activeSuppressor);
+            activeSuppressor.Dispose();
+            _noiseSuppressor = null;
+            TrackNoiseSuppressionFrame(false, 0, true, count, inputPeak, inputSquareSum, inputPeak, inputSquareSum, 0f);
+            return false;
+        }
+
+        Measure(pcm, count, out var outputPeak, out var outputSquareSum);
+        TrackNoiseSuppressionFrame(processed, processedFrames, false, count, inputPeak, inputSquareSum, outputPeak, outputSquareSum, speechProbabilityMax);
+        return processed;
+    }
+
+    public NoiseSuppressionDiagnostics ConsumeNoiseSuppressionDiagnostics()
+    {
+        lock (_noiseSuppressionStatsLock)
+        {
+            var samples = _noiseSuppressionSamplesSinceStats;
+            var diagnostics = new NoiseSuppressionDiagnostics(
+                _noiseSuppressionState,
+                _noiseSuppressionLastError,
+                _noiseSuppressionNativePath,
+                _noiseSuppressionFrameSize,
+                _noiseSuppressionAttemptsSinceStats,
+                _noiseSuppressionProcessedFramesSinceStats,
+                _noiseSuppressionUnavailableFramesSinceStats,
+                samples,
+                _noiseSuppressionInputPeakSinceStats,
+                samples == 0 ? 0.0 : Math.Sqrt(_noiseSuppressionInputSquareSumSinceStats / samples),
+                _noiseSuppressionOutputPeakSinceStats,
+                samples == 0 ? 0.0 : Math.Sqrt(_noiseSuppressionOutputSquareSumSinceStats / samples),
+                _noiseSuppressionSpeechProbabilityMaxSinceStats);
+
+            _noiseSuppressionAttemptsSinceStats = 0;
+            _noiseSuppressionProcessedFramesSinceStats = 0;
+            _noiseSuppressionUnavailableFramesSinceStats = 0;
+            _noiseSuppressionSamplesSinceStats = 0;
+            _noiseSuppressionInputPeakSinceStats = 0f;
+            _noiseSuppressionOutputPeakSinceStats = 0f;
+            _noiseSuppressionInputSquareSumSinceStats = 0.0;
+            _noiseSuppressionOutputSquareSumSinceStats = 0.0;
+            _noiseSuppressionSpeechProbabilityMaxSinceStats = 0f;
+            return diagnostics;
+        }
+    }
+
+    public void Dispose()
+    {
+        _noiseSuppressor?.Dispose();
+        _noiseSuppressor = null;
+    }
 
     public MicFrameDecision PrepareFrameForEncode(
         float[] pcm,
@@ -34,7 +167,6 @@ internal sealed class MicPreprocessor
 
         // VAD and gate state are diagnostics/speaking inputs; OpenMic transport stays continuous.
         _ = vadThreshold;
-
         float peak = 0f;
         double sumSquares = 0.0;
         for (int i = 0; i < count; i++)
@@ -47,7 +179,6 @@ internal sealed class MicPreprocessor
 
         float rms = (float)Math.Sqrt(sumSquares / count);
         float threshold = Math.Max(MinimumTransmitGate, manualGateThreshold);
-
         if (peak >= threshold)
         {
             _hangoverFramesRemaining = HangoverFrames;
@@ -62,4 +193,81 @@ internal sealed class MicPreprocessor
 
         return new MicFrameDecision(false, peak, rms, threshold, "below-threshold");
     }
+
+    private void TrackNoiseSuppressionFrame(
+        bool processed,
+        int processedFrames,
+        bool unavailable,
+        int samples,
+        float inputPeak,
+        double inputSquareSum,
+        float outputPeak,
+        double outputSquareSum,
+        float speechProbabilityMax)
+    {
+        lock (_noiseSuppressionStatsLock)
+        {
+            _noiseSuppressionAttemptsSinceStats++;
+            if (processed)
+                _noiseSuppressionProcessedFramesSinceStats += processedFrames;
+            if (unavailable)
+                _noiseSuppressionUnavailableFramesSinceStats++;
+            _noiseSuppressionSamplesSinceStats += samples;
+            _noiseSuppressionInputPeakSinceStats = Math.Max(_noiseSuppressionInputPeakSinceStats, inputPeak);
+            _noiseSuppressionOutputPeakSinceStats = Math.Max(_noiseSuppressionOutputPeakSinceStats, outputPeak);
+            _noiseSuppressionInputSquareSumSinceStats += inputSquareSum;
+            _noiseSuppressionOutputSquareSumSinceStats += outputSquareSum;
+            _noiseSuppressionSpeechProbabilityMaxSinceStats = Math.Max(_noiseSuppressionSpeechProbabilityMaxSinceStats, speechProbabilityMax);
+        }
+    }
+
+    private void SetNoiseSuppressionState(string state, string error, RnNoiseSuppressor? suppressor)
+    {
+        var safeError = string.IsNullOrWhiteSpace(error) ? "none" : SanitizeLogValue(error);
+        var nativePath = suppressor?.NativePath ?? _noiseSuppressionNativePath;
+        var frameSize = suppressor?.FrameSize ?? _noiseSuppressionFrameSize;
+        bool changed;
+        lock (_noiseSuppressionStatsLock)
+        {
+            changed = _noiseSuppressionState != state
+                      || _noiseSuppressionLastError != safeError
+                      || _noiseSuppressionNativePath != nativePath
+                      || _noiseSuppressionFrameSize != frameSize;
+            _noiseSuppressionState = state;
+            _noiseSuppressionLastError = safeError;
+            _noiseSuppressionNativePath = nativePath;
+            _noiseSuppressionFrameSize = frameSize;
+        }
+
+        if (changed)
+            LogNoiseSuppression($"state={state} error=\"{safeError}\" nativePath=\"{SanitizeLogValue(nativePath)}\" frameSize={frameSize}");
+    }
+
+    private static void Measure(float[] pcm, int count, out float peak, out double squareSum)
+    {
+        peak = 0f;
+        squareSum = 0.0;
+        for (var i = 0; i < count; i++)
+        {
+            var sample = pcm[i];
+            var abs = Math.Abs(sample);
+            if (abs > peak) peak = abs;
+            squareSum += sample * sample;
+        }
+    }
+
+    private static void LogNoiseSuppression(string message)
+    {
+        VoiceDiagnostics.Log("bcl.rnnoise", message);
+        try
+        {
+            global::VoiceChatPlugin.VoiceChatPluginMain.Logger.LogInfo("[VC] bcl.rnnoise " + message);
+        }
+        catch
+        {
+        }
+    }
+
+    private static string SanitizeLogValue(string? value)
+        => string.IsNullOrWhiteSpace(value) ? string.Empty : value.Replace("\"", "'");
 }

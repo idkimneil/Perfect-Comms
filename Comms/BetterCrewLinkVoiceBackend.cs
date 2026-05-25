@@ -213,6 +213,8 @@ internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
     {
         var restartCapture = _captureOptions.SyntheticMicToneEnabled != options.SyntheticMicToneEnabled;
         _captureOptions = options;
+        lock (_captureFrameSync)
+            _micPreprocessor.SetNoiseSuppressionEnabled(options.NoiseSuppressionEnabled);
 
 #if WINDOWS
         if (restartCapture && !Mute && _microphoneReady)
@@ -222,7 +224,7 @@ internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
             StartAndroidMicrophone("capture-options");
 #endif
         VoiceDiagnostics.Log("bcl.capture-options",
-            $"capture={DescribeCaptureMode()} syntheticTone={options.SyntheticMicToneEnabled} calibration={options.MicCalibrationDiagnostics} sensitivity={options.MicSensitivity:0.00}");
+            $"capture={DescribeCaptureMode()} syntheticTone={options.SyntheticMicToneEnabled} noiseSuppression={options.NoiseSuppressionEnabled} calibration={options.MicCalibrationDiagnostics} sensitivity={options.MicSensitivity:0.00}");
     }
 
     public void SetMicrophone(string deviceName, float volume)
@@ -824,6 +826,7 @@ internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
         try { _androidSpeaker?.Dispose(); } catch { }
         _androidSpeaker = null;
 #endif
+        _micPreprocessor.Dispose();
         try { _socket?.DisconnectAsync(); } catch { }
         ClearPeers();
     }
@@ -1655,6 +1658,9 @@ internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
             return;
         }
 
+        if (_captureOptions.NoiseSuppressionEnabled && !IsSyntheticSource(source))
+            _micPreprocessor.TryApplyNoiseSuppression(floatPcm, samples);
+
         var max = 0f;
         double squareSum = 0.0;
         var nonZeroSamples = 0;
@@ -1916,6 +1922,11 @@ internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
         var micZeroCrossRate = micWindowSamples <= 1 ? 0f : micZeroCrossings / (float)(micWindowSamples - 1);
         var micCrest = micRms <= 0.0 ? 0.0 : micPeak / micRms;
         var opusAvgBytes = opusFrames == 0 ? 0.0 : opusBytes / (double)opusFrames;
+        var rnnoise = _micPreprocessor.ConsumeNoiseSuppressionDiagnostics();
+        var rnnoiseSummary =
+            $"enabled={_captureOptions.NoiseSuppressionEnabled} rnnoiseState={rnnoise.State} rnnoiseAttempts={rnnoise.Attempts} rnnoiseFrames={rnnoise.ProcessedFrames} rnnoiseUnavailable={rnnoise.UnavailableFrames} rnnoiseSamples={rnnoise.Samples} " +
+            $"rnnoiseInputPeak={rnnoise.InputPeak:0.000000} rnnoiseInputRms={rnnoise.InputRms:0.000000} rnnoiseOutputPeak={rnnoise.OutputPeak:0.000000} rnnoiseOutputRms={rnnoise.OutputRms:0.000000} rnnoiseSpeechMax={rnnoise.SpeechProbabilityMax:0.000} " +
+            $"rnnoiseFrameSize={rnnoise.FrameSize} rnnoiseNativePath=\"{DiagnosticSafe(rnnoise.NativePath)}\" rnnoiseLastError=\"{DiagnosticSafe(rnnoise.LastError)}\"";
         VoiceDiagnostics.Log("bcl.stats",
             $"reason={reason} room={RoomCode} region={Region} endpoint={ServerUrl} phase={snapshot?.Phase.ToString() ?? "none"} socketConnected={_socket?.Connected == true} socketId={_socket?.Id ?? "none"} " +
             $"peers={peers.Length} openChannels={openChannels} localSocket={GetEffectiveLocalSocketId()} joinedClient={_joinedClientId} joinInFlight={Volatile.Read(ref _joinInFlight)} joinRetryAgeMs={(DateTime.UtcNow - _lastJoinAttemptUtc).TotalMilliseconds:0} audible={peers.Count(peer => peer.CurrentRoute.Audible)} speaking={peers.Count(peer => peer.IsSpeaking)} " +
@@ -1925,7 +1936,21 @@ internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
             $"micCallbacks={Volatile.Read(ref _micCallbacks)} micBytes={Volatile.Read(ref _micBytes)} micSamples={Volatile.Read(ref _micSamples)} micWindowSamples={micWindowSamples} micPeak={micPeak:0.000000} micRms={micRms:0.000000} micCrest={micCrest:0.00} micNonZeroSamples={micNonZeroSamples} micSilentCallbacks={micSilentCallbacks} micNearClipSamples={micNearClipSamples} micClipPct={micClipPct:0.000} micZeroCrossRate={micZeroCrossRate:0.0000} " +
             $"micMutedDrops={Volatile.Read(ref _micMutedDrops)} micEncodeFailures={Volatile.Read(ref _micEncodeFailures)} micEncodedFrames={Volatile.Read(ref _micEncodedFrames)} micNoOpenChannelDrops={Volatile.Read(ref _micNoOpenChannelDrops)} audioDecodeFailures={Volatile.Read(ref _audioDecodeFailures)} " +
             $"noiseGate={noiseGateThreshold:0.000000} vadThreshold={vadThreshold:0.000000} gateReason={_lastGateReason} gatePeak={_lastGatePeak:0.000000} gateRms={_lastGateRms:0.000000} gateThreshold={_lastGateThreshold:0.000000} txGain={_lastTransmitGain:0.000} txPeak={_lastTransmitPeak:0.000000} txPeakMax={txPeakMax:0.000000} txRms={txRms:0.000000} txSamples={txSamples} opusBytesAvg={opusAvgBytes:0.0} opusBytesMin={opusMinBytes} opusBytesMax={opusMaxBytes} " +
-            $"syntheticTone={_captureOptions.SyntheticMicToneEnabled} syntheticFrames={Volatile.Read(ref _syntheticFrames)} capture={DescribeCaptureMode()} calibration={_captureOptions.MicCalibrationDiagnostics} sensitivity={_captureOptions.MicSensitivity:0.00} micReady={_microphoneReady} speakerReady={_speakerReady}");
+            $"syntheticTone={_captureOptions.SyntheticMicToneEnabled} noiseSuppression={_captureOptions.NoiseSuppressionEnabled} {rnnoiseSummary} syntheticFrames={Volatile.Read(ref _syntheticFrames)} capture={DescribeCaptureMode()} calibration={_captureOptions.MicCalibrationDiagnostics} sensitivity={_captureOptions.MicSensitivity:0.00} micReady={_microphoneReady} speakerReady={_speakerReady}");
+        if (_captureOptions.NoiseSuppressionEnabled || rnnoise.Attempts > 0 || rnnoise.UnavailableFrames > 0)
+            LogNoiseSuppressionStats(rnnoiseSummary);
+    }
+
+    private static void LogNoiseSuppressionStats(string message)
+    {
+        VoiceDiagnostics.Log("bcl.rnnoise.stats", message);
+        try
+        {
+            global::VoiceChatPlugin.VoiceChatPluginMain.Logger.LogInfo("[VC] bcl.rnnoise.stats " + message);
+        }
+        catch
+        {
+        }
     }
 
     private string DescribeCaptureMode()

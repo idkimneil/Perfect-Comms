@@ -126,6 +126,9 @@ public class VoiceChatLocalSettings : LocalSettingsTab
         displayValue: true, formatString: "0.00")]
     public ConfigEntry<float> OverlayScale { get; }
 
+    [LocalToggleSetting("Noise Suppression")]
+    public ConfigEntry<bool> NoiseSuppressionEnabled { get; }
+
     [LocalToggleSetting("Debug Voice Stats")]
     public ConfigEntry<bool> DebugVoiceStats { get; }
 
@@ -287,6 +290,9 @@ public class VoiceChatLocalSettings : LocalSettingsTab
             new ConfigDescription("Scale for voice HUD buttons",
                 new AcceptableValueRange<float>(0.75f, 3.00f)));
 
+        NoiseSuppressionEnabled = config.Bind("Audio", "NoiseSuppressionEnabled", true,
+            new ConfigDescription("Use RNNoise to suppress outgoing microphone background noise."));
+
         DebugVoiceStats = config.Bind("Debug", "DebugVoiceStats", false,
             new ConfigDescription("Enable Perfect Comms diagnostic files and debug log output."));
 
@@ -418,6 +424,7 @@ public class VoiceChatLocalSettings : LocalSettingsTab
             VoiceChatRoom.Current?.RefreshLocalAudioSettings();
         }
         else if (configEntry == NoiseGateThreshold || configEntry == VadThreshold ||
+                 configEntry == NoiseSuppressionEnabled ||
                  configEntry == SyntheticMicTone ||
                  configEntry == MicCalibrationDiagnostics)
         {
