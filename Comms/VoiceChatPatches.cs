@@ -32,6 +32,16 @@ public static class VoiceChatPatches
             if (ShouldIgnoreToggleKeybinds()) return;
             VoiceVolumeMenu.Toggle();
         });
+        VoiceChatKeybinds.LocalVoiceRefresh.OnActivate(() =>
+        {
+            if (ShouldIgnoreToggleKeybinds()) return;
+            VoiceChatRoom.RequestLocalVoiceRefreshFromKeybind();
+        });
+        VoiceChatKeybinds.HostVoiceRefresh.OnActivate(() =>
+        {
+            if (ShouldIgnoreToggleKeybinds()) return;
+            VoiceChatRoom.RequestHostVoiceRefreshFromKeybind();
+        });
     }
 
     [HarmonyPostfix, HarmonyPatch(typeof(KeyboardJoystick), nameof(KeyboardJoystick.Update))]

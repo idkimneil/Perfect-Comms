@@ -20,4 +20,10 @@ public static class VoiceChatKeybinds
 
     public static MiraKeybind VolumeMenu { get; } =
         new("Player Volumes", KeyboardKeyCode.B);
+
+    public static MiraKeybind LocalVoiceRefresh { get; } =
+        new("Refresh Voice Connection", KeyboardKeyCode.F7);
+
+    public static MiraKeybind HostVoiceRefresh { get; } =
+        new("Refresh Voice Connections (Host)", KeyboardKeyCode.F8);
 }

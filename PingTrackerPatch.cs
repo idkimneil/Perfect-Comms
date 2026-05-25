@@ -512,18 +512,33 @@ public static class PingTrackerPatch
             LayoutSlots();
     }
 
+    internal static void ClearSpeakingBar()
+    {
+        _activeSpeakerIds.Clear();
+        _activeSpeakerLevels.Clear();
+        DestroySpeakingBarSlots();
+        _layoutDirty = false;
+        if (_barRoot != null)
+            _barRoot.SetActive(false);
+    }
+
+    private static void DestroySpeakingBarSlots()
+    {
+        foreach (var kv in _slots)
+        {
+            if (kv.Value.IconGO   != null) Object.Destroy(kv.Value.IconGO);
+            if (kv.Value.RingGO   != null) Object.Destroy(kv.Value.RingGO);
+            if (kv.Value.LabelTMP != null) Object.Destroy(kv.Value.LabelTMP.gameObject);
+        }
+        _slots.Clear();
+    }
+
     [HarmonyPatch(typeof(HudManager), nameof(HudManager.Start))]
     private static class HudStartPatch
     {
         private static void Postfix()
         {
-            foreach (var kv in _slots)
-            {
-                if (kv.Value.IconGO   != null) Object.Destroy(kv.Value.IconGO);
-                if (kv.Value.RingGO   != null) Object.Destroy(kv.Value.RingGO);
-                if (kv.Value.LabelTMP != null) Object.Destroy(kv.Value.LabelTMP.gameObject);
-            }
-            _slots.Clear();
+            DestroySpeakingBarSlots();
             _layoutDirty = false;
             if (_barRoot != null) { Object.Destroy(_barRoot); _barRoot = null; }
             _barAspect = null;

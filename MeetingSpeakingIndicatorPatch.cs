@@ -45,6 +45,12 @@ public static class MeetingSpeakingIndicatorPatch
             ClearPlayerIndicator(local.PlayerId);
     }
 
+    internal static void ClearAllIndicators()
+    {
+        _speakingLevels.Clear();
+        DisableAll();
+    }
+
     private static void ClearPlayerIndicator(byte playerId)
     {
         _speakingLevels.Remove(playerId);

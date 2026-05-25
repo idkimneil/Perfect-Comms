@@ -35,6 +35,8 @@ public class VoiceChatRoom
     private const double SlowUpdateLogThresholdMs = 20.0;
     private const double SlowOperationLogThresholdMs = 2.0;
     private const double HostSettingsResponseRateLimitSeconds = 2.0;
+    private const float HostVoiceRefreshCooldownSeconds = 10f;
+    private const float LocalVoiceRefreshCooldownSeconds = 10f;
 
     // ── Singleton ─────────────────────────────────────────────────────────────
     public static VoiceChatRoom? Current { get; private set; }
@@ -57,6 +59,10 @@ public class VoiceChatRoom
     private DateTime _lastHostSettingsRequestUtc = DateTime.MinValue;
     private int _lastObservedHostClientId = -1;
     private bool _hostSettingsResyncPending;
+    private int _lastAppliedHostVoiceRefreshNonce;
+    private float _lastHostVoiceRefreshRequestTime = -999f;
+    private float _lastLocalVoiceRefreshRequestTime = -999f;
+    private static int _nextHostVoiceRefreshNonce;
     private byte _lastRadioRpcPlayerId = byte.MaxValue;
     private bool _lastRadioRpcActive;
     private DateTime _lastRadioRpcSentUtc = DateTime.MinValue;
@@ -321,6 +327,138 @@ public class VoiceChatRoom
         {
             return false;
         }
+    }
+
+    internal static void RequestHostVoiceRefreshFromKeybind()
+    {
+        var current = Current;
+        if (current == null)
+        {
+            VoiceDiagnostics.Log("voice.refresh.ignored", "reason=no-room trigger=keybind");
+            return;
+        }
+
+        current.RequestHostVoiceRefreshFromHost();
+    }
+
+    internal static void RequestLocalVoiceRefreshFromKeybind()
+    {
+        var current = Current;
+        if (current == null)
+        {
+            VoiceDiagnostics.Log("voice.refresh.local.ignored", "reason=no-room trigger=keybind");
+            return;
+        }
+
+        current.RequestLocalVoiceRefresh();
+    }
+
+    private void RequestLocalVoiceRefresh()
+    {
+        if (Time.time - _lastLocalVoiceRefreshRequestTime < LocalVoiceRefreshCooldownSeconds)
+        {
+            VoiceDiagnostics.Log("voice.refresh.local.rate_limited",
+                $"trigger=keybind cooldown={LocalVoiceRefreshCooldownSeconds:0.0}s");
+            return;
+        }
+
+        _lastLocalVoiceRefreshRequestTime = Time.time;
+        VoiceDiagnostics.Log("voice.refresh.local.requested",
+            $"backend={_activeBackend} room={LogSafe(_activeRoomCode ?? "unknown")} region={LogSafe(_activeRegion ?? "unknown")} peers={_voiceBackend?.PeerCount ?? 0}");
+        ApplyLocalVoiceRefresh("keybind");
+    }
+
+    private void RequestHostVoiceRefreshFromHost()
+    {
+        if (!IsLocalHost())
+        {
+            VoiceDiagnostics.Log("voice.refresh.rejected", "reason=not-host trigger=keybind");
+            return;
+        }
+
+        if (Time.time - _lastHostVoiceRefreshRequestTime < HostVoiceRefreshCooldownSeconds)
+        {
+            VoiceDiagnostics.Log("voice.refresh.rate_limited",
+                $"trigger=keybind cooldown={HostVoiceRefreshCooldownSeconds:0.0}s");
+            return;
+        }
+
+        _lastHostVoiceRefreshRequestTime = Time.time;
+        var nonce = CreateHostVoiceRefreshNonce();
+        var localClientId = ResolveLocalClientId(CurrentSnapshot);
+        VoiceDiagnostics.Log("voice.refresh.requested",
+            $"nonce={nonce} hostClient={localClientId} backend={_activeBackend} room={LogSafe(_activeRoomCode ?? "unknown")} region={LogSafe(_activeRegion ?? "unknown")}");
+
+        VoiceHostRefreshRpc.Send(nonce);
+        ApplyHostVoiceRefresh(VoiceHostAuthority.FromPlayer(PlayerControl.LocalPlayer, "local"), nonce, "keybind");
+    }
+
+    internal static void ApplyHostVoiceRefreshFromRpc(PlayerControl sender, int nonce)
+    {
+        var current = Current;
+        if (current == null)
+        {
+            VoiceDiagnostics.Log("voice.refresh.ignored", $"reason=no-room trigger=rpc nonce={nonce}");
+            return;
+        }
+
+        var senderIdentity = VoiceHostAuthority.FromPlayer(sender, "rpc");
+        if (!VoiceHostAuthority.IsTrustedHostSender(
+                sender,
+                current.CurrentSnapshot,
+                "rpc",
+                out senderIdentity,
+                out var reason,
+                out var hostClientId,
+                out var hostPlayerId))
+        {
+            VoiceDiagnostics.Log("voice.refresh.rejected",
+                $"{senderIdentity.ToDiagnosticFields()} reason={reason} hostClient={hostClientId} hostPlayer={hostPlayerId} nonce={nonce}");
+            return;
+        }
+
+        current.ApplyHostVoiceRefresh(senderIdentity, nonce, "rpc");
+    }
+
+    private static int CreateHostVoiceRefreshNonce()
+    {
+        unchecked
+        {
+            var nonce = ++_nextHostVoiceRefreshNonce;
+            return nonce != 0 ? nonce : ++_nextHostVoiceRefreshNonce;
+        }
+    }
+
+    private void ApplyHostVoiceRefresh(VoiceHostSenderIdentity sender, int nonce, string trigger)
+    {
+        if (nonce != 0 && nonce == _lastAppliedHostVoiceRefreshNonce)
+        {
+            VoiceDiagnostics.Log("voice.refresh.ignored",
+                $"{sender.ToDiagnosticFields()} reason=duplicate nonce={nonce} trigger={trigger}");
+            return;
+        }
+
+        _lastAppliedHostVoiceRefreshNonce = nonce;
+        var snapshot = CurrentSnapshot;
+        VoiceDiagnostics.Log("voice.refresh.applied",
+            $"{sender.ToDiagnosticFields()} nonce={nonce} trigger={trigger} backend={_activeBackend} room={LogSafe(_activeRoomCode ?? "unknown")} region={LogSafe(_activeRegion ?? "unknown")} peers={_voiceBackend?.PeerCount ?? 0}");
+
+        PingTrackerPatch.ClearSpeakingBar();
+        MeetingSpeakingIndicatorPatch.ClearAllIndicators();
+        StartTransitionTrace($"host voice refresh: {trigger}", snapshot);
+        Rejoin("host voice refresh");
+    }
+
+    private void ApplyLocalVoiceRefresh(string trigger)
+    {
+        var snapshot = CurrentSnapshot;
+        VoiceDiagnostics.Log("voice.refresh.local.applied",
+            $"trigger={trigger} backend={_activeBackend} room={LogSafe(_activeRoomCode ?? "unknown")} region={LogSafe(_activeRegion ?? "unknown")} peers={_voiceBackend?.PeerCount ?? 0}");
+
+        PingTrackerPatch.ClearSpeakingBar();
+        MeetingSpeakingIndicatorPatch.ClearAllIndicators();
+        StartTransitionTrace($"local voice refresh: {trigger}", snapshot);
+        Rejoin("local voice refresh");
     }
 
     private void SendHostSettingsSnapshot(bool force)
@@ -800,13 +938,20 @@ public class VoiceChatRoom
     }
 
     public void Rejoin()
+        => Rejoin("manual rejoin");
+
+    private void Rejoin(string reason)
     {
         _voiceBackend?.Dispose();
         _voiceBackend = null;
         _interstellarVoice = null;
         _betterCrewLinkVoice = null;
+        CurrentSnapshot = null;
+        _snapshotRefreshTimer = 0f;
+        _missingPeerRecoveryReadyTime = -999f;
+        _lastMissingPeerRecoveryTime = -999f;
         ResetSettingsSyncState();
-        StartBootstrapWindow("manual rejoin");
+        StartBootstrapWindow(reason);
     }
 
     private void ResetSettingsSyncState()
