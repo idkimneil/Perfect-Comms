@@ -1,5 +1,18 @@
 # Changelog
 
+## Perfect Comms v2.0.5
+
+This Perfect Comms release adds role-based voice controls and improves voice button placement.
+
+### What's Changed
+
+- Added a new *Perfect Comms: Role Voice Rules* settings section for role-specific voice behavior.
+- Added *Mute Blackmailed Next Round* so blackmail can optionally continue after the meeting.
+- Added options to mute parasite-controlled and puppeteer-controlled players.
+- Improved voice button placement so mic, speaker, and jail controls stay visible and easier to position near the screen edge.
+
+See `docs/release-notes-v2.0.5.md` for the full release notes.
+
 ## Perfect Comms v2.0.4
 
 This Perfect Comms release focuses on BetterCrewLink audio stability and chat input safety.
