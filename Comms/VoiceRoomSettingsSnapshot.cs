@@ -18,7 +18,13 @@ public readonly record struct VoiceRoomSettingsSnapshot(
     bool CameraCanHear,
     bool ImpostorPrivateRadio,
     bool OnlyGhostsCanTalk,
-    bool OnlyMeetingOrLobby)
+    bool OnlyMeetingOrLobby,
+    bool MuteBlackmailedInMeetings,
+    bool MuteBlackmailedNextRound,
+    bool MuteJailedInMeetings,
+    bool JailorCanUnmuteJailed,
+    bool MuteParasiteControlled,
+    bool MutePuppeteerControlled)
 {
     public const float MinChatDistance = 1.5f;
     public const float MaxChatDistanceLimit = 20f;
@@ -38,11 +44,18 @@ public readonly record struct VoiceRoomSettingsSnapshot(
         true,
         false,
         false,
-        false);
+        false,
+        true,
+        true,
+        true,
+        true,
+        true,
+        true);
 
     public static VoiceRoomSettingsSnapshot FromGameOptions()
     {
         var s = VoiceChatGameOptions.GetInstance();
+        var role = VoiceRoleIntegrationOptions.GetInstance();
         var local = LocalSettingsTabSingleton<VoiceChatLocalSettings>.Instance;
         var backend = (VoiceTransportBackend)s.VoiceBackend.Value;
         var endpoint = VoiceEndpointSettings.Resolve(
@@ -64,7 +77,13 @@ public readonly record struct VoiceRoomSettingsSnapshot(
             s.CameraCanHear.Value,
             s.ImpostorPrivateRadio.Value,
             s.OnlyGhostsCanTalk.Value,
-            s.OnlyMeetingOrLobby.Value).Clamp();
+            s.OnlyMeetingOrLobby.Value,
+            role.MuteBlackmailedInMeetings.Value,
+            role.MuteBlackmailedNextRound.Value,
+            role.MuteJailedInMeetings.Value,
+            role.JailorCanUnmuteJailed.Value,
+            role.MuteParasiteControlled.Value,
+            role.MutePuppeteerControlled.Value).Clamp();
     }
 
     public VoiceRoomSettingsSnapshot Clamp()

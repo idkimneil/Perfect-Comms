@@ -17,9 +17,9 @@ public static class VoiceRoomControlCodec
 {
     private const byte Magic0 = (byte)'P';
     private const byte Magic1 = (byte)'C';
-    private const byte Version = 2;
+    private const byte Version = 3;
     private const int HeaderBytes = 4;
-    private const int FixedSettingsBytes = 4 + 4 + 4 + 4 + 10;
+    private const int FixedSettingsBytes = 4 + 4 + 4 + 4 + 16;
     private const int MaxServerUrlBytes = 512;
 
     public static byte[] EncodeHostSettingsSnapshot(VoiceRoomSettingsSnapshot settings)
@@ -89,6 +89,12 @@ public static class VoiceRoomControlCodec
         buffer[23] = ToByte(settings.ImpostorPrivateRadio);
         buffer[24] = ToByte(settings.OnlyGhostsCanTalk);
         buffer[25] = ToByte(settings.OnlyMeetingOrLobby);
+        buffer[26] = ToByte(settings.MuteBlackmailedInMeetings);
+        buffer[27] = ToByte(settings.MuteBlackmailedNextRound);
+        buffer[28] = ToByte(settings.MuteJailedInMeetings);
+        buffer[29] = ToByte(settings.JailorCanUnmuteJailed);
+        buffer[30] = ToByte(settings.MuteParasiteControlled);
+        buffer[31] = ToByte(settings.MutePuppeteerControlled);
         BinaryPrimitives.WriteUInt16LittleEndian(buffer[FixedSettingsBytes..], checked((ushort)serverUrlBytes.Length));
         serverUrlBytes.CopyTo(buffer[(FixedSettingsBytes + 2)..]);
     }
@@ -115,7 +121,13 @@ public static class VoiceRoomControlCodec
             buffer[22] != 0,
             buffer[23] != 0,
             buffer[24] != 0,
-            buffer[25] != 0).Clamp();
+            buffer[25] != 0,
+            buffer[26] != 0,
+            buffer[27] != 0,
+            buffer[28] != 0,
+            buffer[29] != 0,
+            buffer[30] != 0,
+            buffer[31] != 0).Clamp();
         return true;
     }
 

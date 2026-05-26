@@ -9,7 +9,7 @@ on:
       - 'v*'
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   macos-dll:
@@ -47,3 +47,10 @@ jobs:
         with:
           name: PerfectCommsmacOS
           path: artifacts/PerfectCommsmacOS.dll
+
+      - name: Upload GitHub release asset
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: pwsh
+        run: gh release upload $env:GITHUB_REF_NAME artifacts/PerfectCommsmacOS.dll --clobber

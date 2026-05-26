@@ -1,0 +1,136 @@
+using System;
+using HarmonyLib;
+using MiraAPI.Modifiers;
+using UnityEngine;
+
+namespace VoiceChatPlugin.VoiceChat;
+
+internal static partial class VoiceRoleMuteState
+{
+    private static void RefreshRoleStateCacheIfNeeded(bool force = false)
+    {
+        RefreshSupportedModTypesIfNeeded();
+        if (_blackmailedModifierType == null &&
+            _jailedModifierType == null &&
+            _parasiteInfectedModifierType == null &&
+            _puppeteerControlModifierType == null &&
+            PostMeetingBlackmailedPlayers.Count == 0)
+        {
+            RoleStateCache.Clear();
+            return;
+        }
+
+        if (!force && Time.time < _nextRoleStateRefreshTime)
+            return;
+
+        _nextRoleStateRefreshTime = Time.time + RoleStateRefreshInterval;
+        RoleStateCache.Clear();
+        foreach (var player in PlayerControl.AllPlayerControls)
+        {
+            if (player == null) continue;
+            RoleStateCache[player.PlayerId] = ReadRoleState(player);
+        }
+    }
+
+    private static CachedRoleState ReadRoleState(PlayerControl player)
+    {
+        bool isBlackmailed = GetModifier(player, _blackmailedModifierType) != null;
+        bool isParasiteControlled = GetModifier(player, _parasiteInfectedModifierType) != null;
+        bool isPuppeteerControlled = GetModifier(player, _puppeteerControlModifierType) != null;
+        bool isBlackmailedNextRound = PostMeetingBlackmailedPlayers.Contains(player.PlayerId);
+        byte jailorId = byte.MaxValue;
+        bool isJailed = false;
+
+        var modifier = GetModifier(player, _jailedModifierType);
+        if (modifier != null)
+        {
+            try
+            {
+                object? value = modifier.GetType().GetProperty("JailorId")?.GetValue(modifier);
+                if (value is byte id)
+                {
+                    jailorId = id;
+                    isJailed = true;
+                }
+            }
+            catch
+            {
+                // ignored; role integration should fail closed per player, not per frame
+            }
+        }
+
+        return new(
+            isBlackmailed,
+            isJailed,
+            jailorId,
+            isParasiteControlled,
+            isPuppeteerControlled,
+            isBlackmailedNextRound);
+    }
+
+    private static BaseModifier? GetModifier(PlayerControl player, Type? type)
+    {
+        if (type == null) return null;
+        try
+        {
+            return player.GetModifier(type);
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private static void RefreshSupportedModTypesIfNeeded()
+    {
+        VoiceGamePhase phase = VoiceSceneState.ResolvePhase();
+        int gameId = AmongUsClient.Instance?.GameId ?? 0;
+        bool shouldProbe = phase is VoiceGamePhase.Lobby
+            or VoiceGamePhase.Intro
+            or VoiceGamePhase.Tasks
+            or VoiceGamePhase.Meeting;
+        if (!shouldProbe) return;
+
+        bool phaseChanged = phase != _resolvedPhase;
+        bool joinedNewLobby = gameId != 0 && gameId != _resolvedGameId;
+        if (_supportedModTypesResolved && !phaseChanged && !joinedNewLobby)
+            return;
+
+        _resolvedPhase = phase;
+        _resolvedGameId = gameId;
+        _blackmailedModifierType = ResolveType(BlackmailedModifierName);
+        _jailedModifierType = ResolveType(JailedModifierName);
+        _parasiteInfectedModifierType = ResolveType(ParasiteInfectedModifierName);
+        _puppeteerControlModifierType = ResolveType(PuppeteerControlModifierName);
+        _supportedModTypesResolved = true;
+        InvalidateRoleStateCache();
+    }
+
+    private static Type? ResolveType(string fullName)
+    {
+        Type? type = AccessTools.TypeByName(fullName);
+        if (type != null) return type;
+
+        foreach (var asm in AppDomain.CurrentDomain.GetAssemblies())
+        {
+            type = asm.GetType(fullName, false);
+            if (type != null) break;
+        }
+
+        return type;
+    }
+
+    private static void InvalidateRoleStateCache()
+    {
+        _nextRoleStateRefreshTime = 0f;
+        RoleStateCache.Clear();
+    }
+
+    private static PlayerControl? FindPlayer(byte playerId)
+    {
+        foreach (var player in PlayerControl.AllPlayerControls)
+            if (player != null && player.PlayerId == playerId)
+                return player;
+        return null;
+    }
+}

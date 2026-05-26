@@ -61,6 +61,12 @@ internal static class VoiceRoomSettingsRpc
         writer.Write(settings.ImpostorPrivateRadio);
         writer.Write(settings.OnlyGhostsCanTalk);
         writer.Write(settings.OnlyMeetingOrLobby);
+        writer.Write(settings.MuteBlackmailedInMeetings);
+        writer.Write(settings.MuteBlackmailedNextRound);
+        writer.Write(settings.MuteJailedInMeetings);
+        writer.Write(settings.JailorCanUnmuteJailed);
+        writer.Write(settings.MuteParasiteControlled);
+        writer.Write(settings.MutePuppeteerControlled);
     }
 
     private static VoiceRoomSettingsSnapshot ReadSettings(MessageReader reader)
@@ -71,6 +77,12 @@ internal static class VoiceRoomSettingsRpc
             reader.ReadSingle(),
             reader.ReadInt32(),
             reader.ReadInt32(),
+            reader.ReadBoolean(),
+            reader.ReadBoolean(),
+            reader.ReadBoolean(),
+            reader.ReadBoolean(),
+            reader.ReadBoolean(),
+            reader.ReadBoolean(),
             reader.ReadBoolean(),
             reader.ReadBoolean(),
             reader.ReadBoolean(),

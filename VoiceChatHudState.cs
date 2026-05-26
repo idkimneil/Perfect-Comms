@@ -27,6 +27,8 @@ public static class VoiceChatHudState
     private const float TooltipHalfHeight = 1.05f;
     private const float TooltipButtonGap = 0.35f;
     private const float TooltipViewportPadding = 0.02f;
+    private const float ButtonViewportDepth = 10f;
+    private const float ButtonViewportPadding = 0.015f;
     private static float _btnX = 0.99f;
     private static float _btnY = 0.10f;
     private static VoiceControlsLayout _controlsLayout = VoiceControlsLayout.Vertical;
@@ -86,7 +88,7 @@ public static class VoiceChatHudState
 
         var cam = Camera.main;
         if (cam == null) return;
-        var worldPt = cam.ViewportToWorldPoint(new Vector3(_btnX, _btnY, 10f));
+        var worldPt = cam.ViewportToWorldPoint(new Vector3(_btnX, _btnY, ButtonViewportDepth));
 
         float scale = _overlayScale * ButtonScale;
         float spacing = scale * 0.8f;
@@ -96,7 +98,7 @@ public static class VoiceChatHudState
         {
             micPos  = new Vector3(worldPt.x, worldPt.y,             -100f);
             spkPos  = new Vector3(worldPt.x, worldPt.y - spacing,   -100f);
-            jailPos = new Vector3(worldPt.x, worldPt.y - spacing * 2f, -100f);
+            jailPos = new Vector3(worldPt.x, worldPt.y + spacing,   -100f);
         }
         else
         {
@@ -104,6 +106,8 @@ public static class VoiceChatHudState
             spkPos  = new Vector3(worldPt.x + spacing,   worldPt.y, -100f);
             jailPos = new Vector3(worldPt.x + spacing * 2f, worldPt.y, -100f);
         }
+
+        ClampVoiceButtonViewportPositions(cam, ref micPos, ref spkPos, ref jailPos);
 
         var parent = _micButtonObj.transform.parent;
         if (parent != null)
@@ -120,6 +124,49 @@ public static class VoiceChatHudState
             if (_jailButtonObj != null)
                 _jailButtonObj.transform.position = jailPos;
         }
+    }
+
+    private static void ClampVoiceButtonViewportPositions(Camera cam, ref Vector3 micPos, ref Vector3 spkPos, ref Vector3 jailPos)
+    {
+        var depthWorld = cam.ViewportToWorldPoint(new Vector3(0f, 0f, ButtonViewportDepth));
+        var micViewport = cam.WorldToViewportPoint(new Vector3(micPos.x, micPos.y, depthWorld.z));
+        var spkViewport = cam.WorldToViewportPoint(new Vector3(spkPos.x, spkPos.y, depthWorld.z));
+        var jailViewport = cam.WorldToViewportPoint(new Vector3(jailPos.x, jailPos.y, depthWorld.z));
+
+        float minX = Mathf.Min(Mathf.Min(micViewport.x, spkViewport.x), jailViewport.x);
+        float maxX = Mathf.Max(Mathf.Max(micViewport.x, spkViewport.x), jailViewport.x);
+        float minY = Mathf.Min(Mathf.Min(micViewport.y, spkViewport.y), jailViewport.y);
+        float maxY = Mathf.Max(Mathf.Max(micViewport.y, spkViewport.y), jailViewport.y);
+
+        float shiftX = CalculateViewportShift(minX, maxX);
+        float shiftY = CalculateViewportShift(minY, maxY);
+        if (Mathf.Approximately(shiftX, 0f) && Mathf.Approximately(shiftY, 0f))
+            return;
+
+        var origin = cam.ViewportToWorldPoint(new Vector3(0f, 0f, ButtonViewportDepth));
+        var shifted = cam.ViewportToWorldPoint(new Vector3(shiftX, shiftY, ButtonViewportDepth));
+        var delta = shifted - origin;
+        delta.z = 0f;
+
+        micPos += delta;
+        spkPos += delta;
+        jailPos += delta;
+    }
+
+    private static float CalculateViewportShift(float min, float max)
+    {
+        float minAllowed = ButtonViewportPadding;
+        float maxAllowed = 1f - ButtonViewportPadding;
+        float allowedSize = maxAllowed - minAllowed;
+        float currentSize = max - min;
+
+        if (currentSize > allowedSize)
+            return (minAllowed + maxAllowed) * 0.5f - (min + max) * 0.5f;
+        if (min < minAllowed)
+            return minAllowed - min;
+        if (max > maxAllowed)
+            return maxAllowed - max;
+        return 0f;
     }
     internal static void UpdateHud()
     {
@@ -253,7 +300,7 @@ public static class VoiceChatHudState
         {
             var sr = _micButtonObj.transform.Find("VCIcon")?.GetComponent<SpriteRenderer>();
 
-            if (VoiceRoleMuteState.TryGetLocalMeetingVoiceBlockReason(out _))
+            if (VoiceRoleMuteState.TryGetLocalVoiceBlockReason(out _))
             {
                 if (sr != null) { sr.sprite = Sprites.MicOff; sr.color = new Color(1f, 0.65f, 0.15f); }
             }
@@ -295,7 +342,7 @@ public static class VoiceChatHudState
         bool pushToTalkMode  = settings?.MicMode.Value == VoiceMicMode.PushToTalk;
         if (pushToTalkMode && _micMuted) _micMuted = false;
         bool pushToTalkMuted = pushToTalkMode && !_pushToTalkHeld && !radioTransmit;
-        bool roleMuted       = VoiceRoleMuteState.IsLocalMeetingVoiceBlocked();
+        bool roleMuted       = VoiceRoleMuteState.IsLocalVoiceBlocked();
         VoiceChatRoom.Current?.SetMute(_speakerMuted || _micMuted || pushToTalkMuted || roleMuted);
     }
 
@@ -356,7 +403,7 @@ public static class VoiceChatHudState
         && CanUseImpostorRadio()
         && !_speakerMuted
         && !IsManualMuteActive()
-        && !VoiceRoleMuteState.IsLocalMeetingVoiceBlocked();
+        && !VoiceRoleMuteState.IsLocalVoiceBlocked();
 
     internal static void UpdatePushToTalkHeld(bool held)
     {
@@ -436,7 +483,7 @@ public static class VoiceChatHudState
 
         var tab = LocalSettingsTabSingleton<VoiceChatLocalSettings>.Instance;
         bool pushToTalkMode = tab?.MicMode.Value == VoiceMicMode.PushToTalk;
-        string status = VoiceRoleMuteState.TryGetLocalMeetingVoiceBlockReason(out string roleMuteReason)
+        string status = VoiceRoleMuteState.TryGetLocalVoiceBlockReason(out string roleMuteReason)
             ? roleMuteReason
             : _speakerMuted ? "Deafened"
             : IsManualMuteActive() ? "Muted"
@@ -539,7 +586,7 @@ public static class VoiceChatHudState
     }
 
     internal static bool CanUseImpostorRadioInput()
-        => CanUseImpostorRadio() && !VoiceRoleMuteState.IsLocalMeetingVoiceBlocked();
+        => CanUseImpostorRadio() && !VoiceRoleMuteState.IsLocalVoiceBlocked();
 
     private static bool CanUseImpostorRadio()
         => PlayerControl.LocalPlayer != null

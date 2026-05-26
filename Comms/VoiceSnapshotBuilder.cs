@@ -7,6 +7,8 @@ internal static class VoiceSnapshotBuilder
 {
     public static VoiceGameStateSnapshot Build(bool commsSabotageActive)
     {
+        VoiceRoleMuteState.Update();
+
         var local = PlayerControl.LocalPlayer;
         byte localPlayerId = local != null ? local.PlayerId : byte.MaxValue;
         int localClientId = AmongUsClient.Instance != null ? AmongUsClient.Instance.ClientId : -1;
@@ -21,7 +23,14 @@ internal static class VoiceSnapshotBuilder
             var data = player.Data;
             int clientId = ResolveClientId(player, data);
             string name = data?.PlayerName ?? player.name ?? "Unknown";
-            VoiceRoleMuteState.GetPlayerRoleState(player, out bool isBlackmailed, out bool isJailed, out byte jailorId);
+            VoiceRoleMuteState.GetPlayerRoleState(
+                player,
+                out bool isBlackmailed,
+                out bool isJailed,
+                out byte jailorId,
+                out bool isParasiteControlled,
+                out bool isPuppeteerControlled,
+                out bool isBlackmailedNextRound);
 
             players.Add(new VoicePlayerSnapshot(
                 player.PlayerId,
@@ -37,7 +46,10 @@ internal static class VoiceSnapshotBuilder
                 player.gameObject != null && player.gameObject.activeInHierarchy,
                 isBlackmailed,
                 isJailed,
-                jailorId));
+                jailorId,
+                isParasiteControlled,
+                isPuppeteerControlled,
+                isBlackmailedNextRound));
         }
 
         return new VoiceGameStateSnapshot(

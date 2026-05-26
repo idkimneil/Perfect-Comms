@@ -6,43 +6,139 @@ using UnityEngine;
 
 namespace VoiceChatPlugin.VoiceChat;
 
-internal static class VoiceRoleMuteState
+internal static partial class VoiceRoleMuteState
 {
     private const string BlackmailedModifierName = "TownOfUs.Modifiers.Impostor.BlackmailedModifier";
     private const string JailedModifierName = "TownOfUs.Modifiers.Crewmate.JailedModifier";
+    private const string ParasiteInfectedModifierName = "TownOfUs.Modifiers.Impostor.ParasiteInfectedModifier";
+    private const string PuppeteerControlModifierName = "TownOfUs.Modifiers.Impostor.PuppeteerControlModifier";
     private const string JailorRoleName = "TownOfUs.Roles.Crewmate.JailorRole";
     private const float RoleStateRefreshInterval = 0.25f;
 
     private static readonly HashSet<byte> JailVoiceAllowed = new();
+    private static readonly HashSet<byte> MeetingBlackmailedPlayers = new();
+    private static readonly HashSet<byte> PostMeetingBlackmailedPlayers = new();
     private static readonly Dictionary<byte, CachedRoleState> RoleStateCache = new();
+
     private static Type? _blackmailedModifierType;
     private static Type? _jailedModifierType;
+    private static Type? _parasiteInfectedModifierType;
+    private static Type? _puppeteerControlModifierType;
     private static bool _supportedModTypesResolved;
     private static int _resolvedGameId = int.MinValue;
     private static VoiceGamePhase _resolvedPhase = VoiceGamePhase.Unknown;
     private static float _nextRoleStateRefreshTime;
     private static bool _wasInMeeting;
 
-    private readonly record struct CachedRoleState(bool IsBlackmailed, bool IsJailed, byte JailorId);
+    private readonly record struct CachedRoleState(
+        bool IsBlackmailed,
+        bool IsJailed,
+        byte JailorId,
+        bool IsParasiteControlled,
+        bool IsPuppeteerControlled,
+        bool IsBlackmailedNextRound);
 
     internal static void Update()
     {
-        RefreshRoleStateCacheIfNeeded();
+        var settings = VoiceRoomSettingsState.Current;
         bool inMeeting = MeetingHud.Instance != null;
-        if (!inMeeting)
+
+        if (inMeeting && !_wasInMeeting)
         {
-            if (_wasInMeeting)
-                JailVoiceAllowed.Clear();
-            _wasInMeeting = false;
+            PostMeetingBlackmailedPlayers.Clear();
+            MeetingBlackmailedPlayers.Clear();
+            InvalidateRoleStateCache();
+        }
+
+        RefreshRoleStateCacheIfNeeded();
+
+        if (inMeeting)
+        {
+            _wasInMeeting = true;
+            if (settings.MuteBlackmailedInMeetings)
+                TrackMeetingBlackmailedPlayers();
+            else
+                MeetingBlackmailedPlayers.Clear();
+
+            PruneJailVoiceAllowed(settings);
             return;
         }
 
-        _wasInMeeting = true;
-        PruneJailVoiceAllowed();
+        if (_wasInMeeting)
+        {
+            _wasInMeeting = false;
+            JailVoiceAllowed.Clear();
+            PostMeetingBlackmailedPlayers.Clear();
+
+            if (settings.MuteBlackmailedInMeetings && settings.MuteBlackmailedNextRound)
+            {
+                foreach (byte playerId in MeetingBlackmailedPlayers)
+                    PostMeetingBlackmailedPlayers.Add(playerId);
+            }
+
+            MeetingBlackmailedPlayers.Clear();
+            InvalidateRoleStateCache();
+        }
+        else if (!settings.MuteBlackmailedNextRound && PostMeetingBlackmailedPlayers.Count > 0)
+        {
+            PostMeetingBlackmailedPlayers.Clear();
+            InvalidateRoleStateCache();
+        }
+
+        var phase = VoiceSceneState.ResolvePhase();
+        if (phase is VoiceGamePhase.Menu or VoiceGamePhase.Lobby or VoiceGamePhase.Intro or VoiceGamePhase.EndGame)
+        {
+            if (PostMeetingBlackmailedPlayers.Count > 0)
+            {
+                PostMeetingBlackmailedPlayers.Clear();
+                InvalidateRoleStateCache();
+            }
+        }
+
+        PrunePostMeetingBlackmailedPlayers();
     }
+
+    internal static bool IsLocalVoiceBlocked()
+        => TryGetLocalVoiceBlockReason(out _);
 
     internal static bool IsLocalMeetingVoiceBlocked()
         => TryGetLocalMeetingVoiceBlockReason(out _);
+
+    internal static bool TryGetLocalVoiceBlockReason(out string reason)
+    {
+        reason = string.Empty;
+        Update();
+
+        var local = PlayerControl.LocalPlayer;
+        if (local == null || local.Data?.IsDead == true)
+            return false;
+
+        GetPlayerRoleState(local, out bool isBlackmailed, out bool isJailed, out byte jailorId,
+            out bool isParasiteControlled, out bool isPuppeteerControlled, out bool isBlackmailedNextRound);
+
+        var state = new CachedRoleState(
+            isBlackmailed,
+            isJailed,
+            jailorId,
+            isParasiteControlled,
+            isPuppeteerControlled,
+            isBlackmailedNextRound);
+
+        var settings = VoiceRoomSettingsState.Current;
+        if (MeetingHud.Instance != null && IsMeetingVoiceBlocked(local.PlayerId, state, settings, out var meetingReason))
+        {
+            reason = ToDisplayReason(meetingReason);
+            return true;
+        }
+
+        if (IsTaskVoiceBlocked(local.PlayerId, state, settings, out var taskReason))
+        {
+            reason = ToDisplayReason(taskReason);
+            return true;
+        }
+
+        return false;
+    }
 
     internal static bool TryGetLocalMeetingVoiceBlockReason(out string reason)
     {
@@ -53,53 +149,106 @@ internal static class VoiceRoleMuteState
         if (local == null || MeetingHud.Instance == null || local.Data?.IsDead == true)
             return false;
 
-        GetPlayerRoleState(local, out bool isBlackmailed, out bool isJailed, out byte jailorId);
-        if (isBlackmailed)
-        {
-            reason = "Blackmailed";
-            return true;
-        }
+        GetPlayerRoleState(local, out bool isBlackmailed, out bool isJailed, out byte jailorId,
+            out _, out _, out _);
 
-        if (isJailed && IsJailorValid(jailorId) && !JailVoiceAllowed.Contains(local.PlayerId))
-        {
-            reason = "Jailed";
-            return true;
-        }
+        var state = new CachedRoleState(isBlackmailed, isJailed, jailorId, false, false, false);
+        if (!IsMeetingVoiceBlocked(local.PlayerId, state, VoiceRoomSettingsState.Current, out var blockReason))
+            return false;
 
-        return false;
+        reason = ToDisplayReason(blockReason);
+        return true;
     }
 
     internal static bool IsMeetingVoiceBlocked(VoicePlayerSnapshot player)
     {
         if (MeetingHud.Instance == null || player.IsDead)
             return false;
-        if (player.IsBlackmailed)
-            return true;
-        if (player.IsJailed && IsJailorValid(player.JailorId) && !JailVoiceAllowed.Contains(player.PlayerId))
-            return true;
-        return false;
+
+        var state = new CachedRoleState(
+            player.IsBlackmailed,
+            player.IsJailed,
+            player.JailorId,
+            player.IsParasiteControlled,
+            player.IsPuppeteerControlled,
+            player.IsBlackmailedNextRound);
+
+        return IsMeetingVoiceBlocked(player.PlayerId, state, VoiceRoomSettingsState.Current, out _);
     }
 
     internal static VoiceProximityReason GetMeetingBlockReason(VoicePlayerSnapshot player)
-        => player.IsBlackmailed ? VoiceProximityReason.Blackmailed : VoiceProximityReason.Jailed;
+    {
+        var state = new CachedRoleState(
+            player.IsBlackmailed,
+            player.IsJailed,
+            player.JailorId,
+            player.IsParasiteControlled,
+            player.IsPuppeteerControlled,
+            player.IsBlackmailedNextRound);
+
+        return IsMeetingVoiceBlocked(player.PlayerId, state, VoiceRoomSettingsState.Current, out var reason)
+            ? reason
+            : VoiceProximityReason.MeetingLiving;
+    }
+
+    internal static bool IsTaskVoiceBlocked(VoicePlayerSnapshot player)
+    {
+        if (player.IsDead)
+            return false;
+
+        var state = new CachedRoleState(
+            player.IsBlackmailed,
+            player.IsJailed,
+            player.JailorId,
+            player.IsParasiteControlled,
+            player.IsPuppeteerControlled,
+            player.IsBlackmailedNextRound);
+
+        return IsTaskVoiceBlocked(player.PlayerId, state, VoiceRoomSettingsState.Current, out _);
+    }
+
+    internal static VoiceProximityReason GetTaskBlockReason(VoicePlayerSnapshot player)
+    {
+        var state = new CachedRoleState(
+            player.IsBlackmailed,
+            player.IsJailed,
+            player.JailorId,
+            player.IsParasiteControlled,
+            player.IsPuppeteerControlled,
+            player.IsBlackmailedNextRound);
+
+        return IsTaskVoiceBlocked(player.PlayerId, state, VoiceRoomSettingsState.Current, out var reason)
+            ? reason
+            : VoiceProximityReason.Proximity;
+    }
 
     internal static bool IsBlackmailed(PlayerControl? player)
     {
-        GetPlayerRoleState(player, out bool isBlackmailed, out _, out _);
+        GetPlayerRoleState(player, out bool isBlackmailed, out _, out _, out _, out _, out _);
         return isBlackmailed;
     }
 
     internal static bool TryGetJailorId(PlayerControl? player, out byte jailorId)
     {
-        GetPlayerRoleState(player, out _, out bool isJailed, out jailorId);
+        GetPlayerRoleState(player, out _, out bool isJailed, out jailorId, out _, out _, out _);
         return isJailed;
     }
 
-    internal static void GetPlayerRoleState(PlayerControl? player, out bool isBlackmailed, out bool isJailed, out byte jailorId)
+    internal static void GetPlayerRoleState(
+        PlayerControl? player,
+        out bool isBlackmailed,
+        out bool isJailed,
+        out byte jailorId,
+        out bool isParasiteControlled,
+        out bool isPuppeteerControlled,
+        out bool isBlackmailedNextRound)
     {
         isBlackmailed = false;
         isJailed = false;
         jailorId = byte.MaxValue;
+        isParasiteControlled = false;
+        isPuppeteerControlled = false;
+        isBlackmailedNextRound = false;
         if (player == null) return;
 
         RefreshRoleStateCacheIfNeeded();
@@ -108,12 +257,19 @@ internal static class VoiceRoleMuteState
         isBlackmailed = state.IsBlackmailed;
         isJailed = state.IsJailed;
         jailorId = state.JailorId;
+        isParasiteControlled = state.IsParasiteControlled;
+        isPuppeteerControlled = state.IsPuppeteerControlled;
+        isBlackmailedNextRound = state.IsBlackmailedNextRound;
     }
 
     internal static bool CanLocalJailorUnmute(out byte jailedPlayerId)
     {
         jailedPlayerId = byte.MaxValue;
         Update();
+
+        var settings = VoiceRoomSettingsState.Current;
+        if (!settings.MuteJailedInMeetings || !settings.JailorCanUnmuteJailed)
+            return false;
 
         var local = PlayerControl.LocalPlayer;
         if (local == null || MeetingHud.Instance == null || local.Data?.IsDead == true || !IsJailor(local))
@@ -124,7 +280,6 @@ internal static class VoiceRoleMuteState
             if (player == null || player.Data?.IsDead == true) continue;
             if (!TryGetJailorId(player, out byte jailorId) || jailorId != local.PlayerId) continue;
             if (!IsJailorValid(jailorId) || JailVoiceAllowed.Contains(player.PlayerId)) continue;
-
             jailedPlayerId = player.PlayerId;
             return true;
         }
@@ -144,6 +299,10 @@ internal static class VoiceRoleMuteState
     internal static void ApplyRemoteJailVoice(byte jailorId, byte jailedPlayerId, bool allowed)
     {
         RefreshRoleStateCacheIfNeeded(force: true);
+        var settings = VoiceRoomSettingsState.Current;
+        if (!settings.MuteJailedInMeetings || !settings.JailorCanUnmuteJailed)
+            return;
+
         var jailed = FindPlayer(jailedPlayerId);
         if (jailed == null || !TryGetJailorId(jailed, out byte actualJailorId) || actualJailorId != jailorId)
             return;
@@ -156,6 +315,82 @@ internal static class VoiceRoleMuteState
 
     internal static bool IsJailVoiceAllowed(byte playerId)
         => JailVoiceAllowed.Contains(playerId);
+
+    private static bool IsMeetingVoiceBlocked(
+        byte playerId,
+        CachedRoleState state,
+        VoiceRoomSettingsSnapshot settings,
+        out VoiceProximityReason reason)
+    {
+        reason = VoiceProximityReason.MeetingLiving;
+
+        if (settings.MuteBlackmailedInMeetings && state.IsBlackmailed)
+        {
+            reason = VoiceProximityReason.Blackmailed;
+            return true;
+        }
+
+        if (settings.MuteJailedInMeetings &&
+            state.IsJailed &&
+            IsJailorValid(state.JailorId) &&
+            (!settings.JailorCanUnmuteJailed || !JailVoiceAllowed.Contains(playerId)))
+        {
+            reason = VoiceProximityReason.Jailed;
+            return true;
+        }
+
+        return false;
+    }
+
+    private static bool IsTaskVoiceBlocked(
+        byte playerId,
+        CachedRoleState state,
+        VoiceRoomSettingsSnapshot settings,
+        out VoiceProximityReason reason)
+    {
+        _ = playerId;
+        reason = VoiceProximityReason.Proximity;
+
+        if (settings.MuteBlackmailedNextRound && state.IsBlackmailedNextRound)
+        {
+            reason = VoiceProximityReason.BlackmailedNextRound;
+            return true;
+        }
+
+        if (settings.MuteParasiteControlled && state.IsParasiteControlled)
+        {
+            reason = VoiceProximityReason.ParasiteControlled;
+            return true;
+        }
+
+        if (settings.MutePuppeteerControlled && state.IsPuppeteerControlled)
+        {
+            reason = VoiceProximityReason.PuppeteerControlled;
+            return true;
+        }
+
+        return false;
+    }
+
+    private static string ToDisplayReason(VoiceProximityReason reason)
+        => reason switch
+        {
+            VoiceProximityReason.Blackmailed => "Blackmailed",
+            VoiceProximityReason.BlackmailedNextRound => "Blackmailed",
+            VoiceProximityReason.Jailed => "Jailed",
+            VoiceProximityReason.ParasiteControlled => "Parasite Controlled",
+            VoiceProximityReason.PuppeteerControlled => "Puppeteer Controlled",
+            _ => "Role Muted",
+        };
+
+    private static void TrackMeetingBlackmailedPlayers()
+    {
+        foreach (var pair in RoleStateCache)
+        {
+            if (pair.Value.IsBlackmailed)
+                MeetingBlackmailedPlayers.Add(pair.Key);
+        }
+    }
 
     private static void SetJailVoiceAllowed(byte playerId, bool allowed)
     {
@@ -187,9 +422,14 @@ internal static class VoiceRoleMuteState
         return roleName == JailorRoleName;
     }
 
-    private static void PruneJailVoiceAllowed()
+    private static void PruneJailVoiceAllowed(VoiceRoomSettingsSnapshot settings)
     {
         if (JailVoiceAllowed.Count == 0) return;
+        if (!settings.MuteJailedInMeetings || !settings.JailorCanUnmuteJailed)
+        {
+            JailVoiceAllowed.Clear();
+            return;
+        }
 
         foreach (byte playerId in new List<byte>(JailVoiceAllowed))
         {
@@ -199,109 +439,23 @@ internal static class VoiceRoleMuteState
         }
     }
 
-    private static void RefreshRoleStateCacheIfNeeded(bool force = false)
+    private static void PrunePostMeetingBlackmailedPlayers()
     {
-        RefreshSupportedModTypesIfNeeded();
-        if (_blackmailedModifierType == null && _jailedModifierType == null)
-        {
-            RoleStateCache.Clear();
-            return;
-        }
+        if (PostMeetingBlackmailedPlayers.Count == 0) return;
+        bool removed = false;
 
-        if (!force && Time.time < _nextRoleStateRefreshTime)
-            return;
-
-        _nextRoleStateRefreshTime = Time.time + RoleStateRefreshInterval;
-        RoleStateCache.Clear();
-        foreach (var player in PlayerControl.AllPlayerControls)
+        foreach (byte playerId in new List<byte>(PostMeetingBlackmailedPlayers))
         {
-            if (player == null) continue;
-            RoleStateCache[player.PlayerId] = ReadRoleState(player);
-        }
-    }
-
-    private static CachedRoleState ReadRoleState(PlayerControl player)
-    {
-        bool isBlackmailed = GetModifier(player, _blackmailedModifierType) != null;
-        byte jailorId = byte.MaxValue;
-        bool isJailed = false;
-        var modifier = GetModifier(player, _jailedModifierType);
-        if (modifier != null)
-        {
-            try
+            var player = FindPlayer(playerId);
+            if (player == null || player.Data?.IsDead == true || player.Data?.Disconnected == true)
             {
-                object? value = modifier.GetType().GetProperty("JailorId")?.GetValue(modifier);
-                if (value is byte id)
-                {
-                    jailorId = id;
-                    isJailed = true;
-                }
-            }
-            catch
-            {
-                // ignored; role integration should fail closed per player, not per frame
+                PostMeetingBlackmailedPlayers.Remove(playerId);
+                removed = true;
             }
         }
 
-        return new(isBlackmailed, isJailed, jailorId);
+        if (removed)
+            InvalidateRoleStateCache();
     }
 
-    private static BaseModifier? GetModifier(PlayerControl player, Type? type)
-    {
-        if (type == null) return null;
-        try
-        {
-            return player.GetModifier(type);
-        }
-        catch
-        {
-            return null;
-        }
-    }
-
-    private static void RefreshSupportedModTypesIfNeeded()
-    {
-        VoiceGamePhase phase = VoiceSceneState.ResolvePhase();
-        int gameId = AmongUsClient.Instance?.GameId ?? 0;
-        bool shouldProbe = phase is VoiceGamePhase.Lobby
-            or VoiceGamePhase.Intro
-            or VoiceGamePhase.Tasks
-            or VoiceGamePhase.Meeting;
-        if (!shouldProbe) return;
-
-        bool phaseChanged = phase != _resolvedPhase;
-        bool joinedNewLobby = gameId != 0 && gameId != _resolvedGameId;
-        if (_supportedModTypesResolved && !phaseChanged && !joinedNewLobby)
-            return;
-
-        _resolvedPhase = phase;
-        _resolvedGameId = gameId;
-        _blackmailedModifierType = ResolveType(BlackmailedModifierName);
-        _jailedModifierType = ResolveType(JailedModifierName);
-        _supportedModTypesResolved = true;
-        _nextRoleStateRefreshTime = 0f;
-        RoleStateCache.Clear();
-    }
-
-    private static Type? ResolveType(string fullName)
-    {
-        Type? type = AccessTools.TypeByName(fullName);
-        if (type != null) return type;
-
-        foreach (var asm in AppDomain.CurrentDomain.GetAssemblies())
-        {
-            type = asm.GetType(fullName, false);
-            if (type != null) break;
-        }
-
-        return type;
-    }
-
-    private static PlayerControl? FindPlayer(byte playerId)
-    {
-        foreach (var player in PlayerControl.AllPlayerControls)
-            if (player != null && player.PlayerId == playerId)
-                return player;
-        return null;
-    }
 }

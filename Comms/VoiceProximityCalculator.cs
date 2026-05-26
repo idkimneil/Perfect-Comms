@@ -48,6 +48,9 @@ internal static class VoiceProximityCalculator
         if (s.OnlyGhostsCanTalk && !localDead)
             return VoiceProximityResult.Muted(VoiceProximityReason.OnlyGhostsCanTalk);
 
+        if (VoiceRoleMuteState.IsMeetingVoiceBlocked(target))
+            return VoiceProximityResult.Muted(VoiceRoleMuteState.GetMeetingBlockReason(target));
+
         if (s.ImpostorPrivateRadio && targetRadioActive && targetImp && !targetDead)
         {
             if (localImp)
@@ -56,9 +59,6 @@ internal static class VoiceProximityCalculator
 
             return VoiceProximityResult.Muted(VoiceProximityReason.ImpostorRadioMuted);
         }
-
-        if (VoiceRoleMuteState.IsMeetingVoiceBlocked(target))
-            return VoiceProximityResult.Muted(VoiceRoleMuteState.GetMeetingBlockReason(target));
 
         if (localDead)
             return CalculateLocalDeadHearing(targetDead, s.OnlyGhostsCanTalk, 1f, 1f, 0f);
@@ -115,6 +115,9 @@ internal static class VoiceProximityCalculator
             return VoiceProximityResult.Muted(VoiceProximityReason.OnlyGhostsCanTalk, previousWallCoefficient);
         if (commsSabActive && s.CommsSabDisables && !localDead)
             return VoiceProximityResult.Muted(VoiceProximityReason.CommsSabotage, previousWallCoefficient);
+
+        if (VoiceRoleMuteState.IsTaskVoiceBlocked(target))
+            return VoiceProximityResult.Muted(VoiceRoleMuteState.GetTaskBlockReason(target), previousWallCoefficient);
 
         if (s.ImpostorPrivateRadio && targetRadioActive && targetImp && !targetDead)
         {
