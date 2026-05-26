@@ -1,5 +1,17 @@
 # Changelog
 
+## Perfect Comms v2.0.4
+
+This Perfect Comms release focuses on BetterCrewLink audio stability and chat input safety.
+
+### Fixed
+
+- Fixed intermittent fuzzy/static audio in BetterCrewLink lobbies when multiple voices overlap.
+- Fixed hot BetterCrewLink mic frames after RNNoise so clipped capture peaks are limited before Opus encoding.
+- Fixed chat input handling so Perfect Comms no longer intercepts textbox typing, preventing crashes while typing in chat.
+
+See `docs/release-notes-v2.0.4.md` for the full release notes.
+
 ## Perfect Comms v2.0.3
 
 This Perfect Comms release focuses on voice stability, speaking ring accuracy, noise suppression, and cleaner in-game controls.
