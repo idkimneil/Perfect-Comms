@@ -28,6 +28,14 @@ internal sealed class MacOsFullDuplexAudioEngine : IDisposable
     private long _restarts;
     private bool _running;
 
+    // Fix #10: Track whether the native device has been fully stopped before
+    // freeing the GCHandle. On CrossOver, CoreAudio callback teardown is async
+    // and freeing the handle while a callback is in-flight corrupts the GC heap.
+    // We use a semaphore to drain in-flight callbacks before freeing.
+    private int _inFlightCallbacks;
+    private readonly ManualResetEventSlim _callbacksDrained = new(true);
+    private volatile bool _disposed;
+
     public MacOsFullDuplexAudioEngine(string owner)
     {
         _owner = owner;
@@ -93,9 +101,25 @@ internal sealed class MacOsFullDuplexAudioEngine : IDisposable
 
     public void Dispose()
     {
+        if (_disposed) return;
+        _disposed = true;
+
         Stop("dispose");
+
+        // Fix #10: Wait for any in-flight callbacks to finish before freeing
+        // the GCHandle. CrossOver's CoreAudio emulation may invoke callbacks
+        // after StopFullDuplex returns, unlike real macOS. Cap the wait at
+        // 500ms to avoid hanging if CrossOver drops the callback entirely.
+        if (!_callbacksDrained.Wait(TimeSpan.FromMilliseconds(500)))
+        {
+            VoiceDiagnostics.Log("mac.audio.dispose",
+                $"backend={_owner} warning=callbacks-not-drained-in-time inFlight={_inFlightCallbacks}");
+        }
+
         if (_selfHandle.IsAllocated)
             _selfHandle.Free();
+
+        _callbacksDrained.Dispose();
     }
 
     private void StopLocked(string reason)
@@ -106,6 +130,20 @@ internal sealed class MacOsFullDuplexAudioEngine : IDisposable
         _captureSink = null;
         _playbackSource = null;
         MacOsAudioBridge.StopFullDuplex();
+    }
+
+    // Fix #10: Track entry/exit of callbacks so Dispose can drain them.
+    private void EnterCallback()
+    {
+        // Reset the event when the first callback enters.
+        if (Interlocked.Increment(ref _inFlightCallbacks) == 1)
+            _callbacksDrained.Reset();
+    }
+
+    private void ExitCallback()
+    {
+        if (Interlocked.Decrement(ref _inFlightCallbacks) == 0)
+            _callbacksDrained.Set();
     }
 
     private static MacOsFullDuplexAudioEngine? FromUserData(IntPtr userData)
@@ -123,69 +161,89 @@ internal sealed class MacOsFullDuplexAudioEngine : IDisposable
 
     private void HandleNativeCapture(IntPtr samples, int frameCount, int channels)
     {
-        if (!_running || samples == IntPtr.Zero || frameCount <= 0 || channels <= 0) return;
-        Interlocked.Increment(ref _captureCallbacks);
-        Interlocked.Add(ref _captureFrames, frameCount);
+        // Fix #10: Guard against callbacks arriving after disposal.
+        if (_disposed || samples == IntPtr.Zero || frameCount <= 0 || channels <= 0) return;
+        EnterCallback();
         try
         {
-            var sampleCount = checked(frameCount * channels);
-            EnsureScratch(ref _captureScratch, sampleCount);
-            Marshal.Copy(samples, _captureScratch, 0, sampleCount);
+            Interlocked.Increment(ref _captureCallbacks);
+            Interlocked.Add(ref _captureFrames, frameCount);
+            try
+            {
+                var sampleCount = checked(frameCount * channels);
+                EnsureScratch(ref _captureScratch, sampleCount);
+                Marshal.Copy(samples, _captureScratch, 0, sampleCount);
 
-            EnsureScratch(ref _captureMono, frameCount);
-            if (channels == 1)
-            {
-                Array.Copy(_captureScratch, _captureMono, frameCount);
-            }
-            else
-            {
-                for (var frame = 0; frame < frameCount; frame++)
+                EnsureScratch(ref _captureMono, frameCount);
+                if (channels == 1)
                 {
-                    var sum = 0f;
-                    var baseIndex = frame * channels;
-                    for (var channel = 0; channel < channels; channel++)
-                        sum += _captureScratch[baseIndex + channel];
-                    _captureMono[frame] = Math.Clamp(sum / channels, -1f, 1f);
+                    Array.Copy(_captureScratch, _captureMono, frameCount);
                 }
-            }
+                else
+                {
+                    for (var frame = 0; frame < frameCount; frame++)
+                    {
+                        var sum = 0f;
+                        var baseIndex = frame * channels;
+                        for (var channel = 0; channel < channels; channel++)
+                            sum += _captureScratch[baseIndex + channel];
+                        _captureMono[frame] = Math.Clamp(sum / channels, -1f, 1f);
+                    }
+                }
 
-            _captureSink?.Invoke(_captureMono, frameCount);
+                _captureSink?.Invoke(_captureMono, frameCount);
+            }
+            catch (Exception ex)
+            {
+                if (Interlocked.Increment(ref _callbackErrors) == 1)
+                    VoiceDiagnostics.Log("mac.audio.callback_error",
+                        $"backend={_owner} direction=capture error=\"{ex.Message}\"");
+            }
         }
-        catch (Exception ex)
+        finally
         {
-            if (Interlocked.Increment(ref _callbackErrors) == 1)
-                VoiceDiagnostics.Log("mac.audio.callback_error", $"backend={_owner} direction=capture error=\"{ex.Message}\"");
+            ExitCallback();
         }
     }
 
     private int HandleNativePlayback(IntPtr samples, int frameCount, int channels)
     {
-        if (samples == IntPtr.Zero || frameCount <= 0 || channels <= 0) return 0;
-        Interlocked.Increment(ref _playbackCallbacks);
-        Interlocked.Add(ref _playbackFrames, frameCount);
-        var sampleCount = checked(frameCount * channels);
+        // Fix #10: Guard against callbacks arriving after disposal.
+        if (_disposed || samples == IntPtr.Zero || frameCount <= 0 || channels <= 0) return 0;
+        EnterCallback();
         try
         {
-            EnsureScratch(ref _playbackScratch, sampleCount);
-            Array.Clear(_playbackScratch, 0, sampleCount);
-            var read = _running ? _playbackSource?.Invoke(_playbackScratch, sampleCount) ?? 0 : 0;
-            if (read < sampleCount)
+            Interlocked.Increment(ref _playbackCallbacks);
+            Interlocked.Add(ref _playbackFrames, frameCount);
+            var sampleCount = checked(frameCount * channels);
+            try
             {
-                Interlocked.Increment(ref _underruns);
-                if (read > 0)
-                    Array.Clear(_playbackScratch, read, sampleCount - read);
+                EnsureScratch(ref _playbackScratch, sampleCount);
+                Array.Clear(_playbackScratch, 0, sampleCount);
+                var read = _running ? _playbackSource?.Invoke(_playbackScratch, sampleCount) ?? 0 : 0;
+                if (read < sampleCount)
+                {
+                    Interlocked.Increment(ref _underruns);
+                    if (read > 0)
+                        Array.Clear(_playbackScratch, read, sampleCount - read);
+                }
+                Marshal.Copy(_playbackScratch, 0, samples, sampleCount);
+                return sampleCount;
             }
-            Marshal.Copy(_playbackScratch, 0, samples, sampleCount);
-            return sampleCount;
+            catch (Exception ex)
+            {
+                Interlocked.Increment(ref _callbackErrors);
+                Interlocked.Increment(ref _underruns);
+                Array.Clear(_playbackScratch, 0, Math.Min(_playbackScratch.Length, sampleCount));
+                Marshal.Copy(_playbackScratch, 0, samples, sampleCount);
+                VoiceDiagnostics.Log("mac.audio.callback_error",
+                    $"backend={_owner} direction=playback error=\"{ex.Message}\"");
+                return sampleCount;
+            }
         }
-        catch (Exception ex)
+        finally
         {
-            Interlocked.Increment(ref _callbackErrors);
-            Interlocked.Increment(ref _underruns);
-            Array.Clear(_playbackScratch, 0, Math.Min(_playbackScratch.Length, sampleCount));
-            Marshal.Copy(_playbackScratch, 0, samples, sampleCount);
-            VoiceDiagnostics.Log("mac.audio.callback_error", $"backend={_owner} direction=playback error=\"{ex.Message}\"");
-            return sampleCount;
+            ExitCallback();
         }
     }
 
