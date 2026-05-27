@@ -14,6 +14,7 @@ public class VoiceRoleIntegrationOptions : AbstractOptionGroup
     public ModdedToggleOption JailorCanUnmuteJailed { get; } = new("Jailor Can Unmute Jailed", true);
     public ModdedToggleOption MuteParasiteControlled { get; } = new("Mute Parasite-Controlled Player", true);
     public ModdedToggleOption MutePuppeteerControlled { get; } = new("Mute Puppeteer-Controlled Player", true);
+    public ModdedToggleOption CrewpostorUsesImpostorVoice { get; } = new("Crewpostor Uses Impostor Voice", true);
 
     internal static VoiceRoleIntegrationOptions GetInstance() =>
         OptionGroupSingleton<VoiceRoleIntegrationOptions>.Instance;

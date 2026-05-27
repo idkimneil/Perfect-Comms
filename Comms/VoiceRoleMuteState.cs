@@ -12,6 +12,7 @@ internal static partial class VoiceRoleMuteState
     private const string JailedModifierName = "TownOfUs.Modifiers.Crewmate.JailedModifier";
     private const string ParasiteInfectedModifierName = "TownOfUs.Modifiers.Impostor.ParasiteInfectedModifier";
     private const string PuppeteerControlModifierName = "TownOfUs.Modifiers.Impostor.PuppeteerControlModifier";
+    private const string CrewpostorModifierName = "TownOfUs.Modifiers.Game.Alliance.CrewpostorModifier";
     private const string JailorRoleName = "TownOfUs.Roles.Crewmate.JailorRole";
     private const float RoleStateRefreshInterval = 0.25f;
 
@@ -24,6 +25,7 @@ internal static partial class VoiceRoleMuteState
     private static Type? _jailedModifierType;
     private static Type? _parasiteInfectedModifierType;
     private static Type? _puppeteerControlModifierType;
+    private static Type? _crewpostorModifierType;
     private static bool _supportedModTypesResolved;
     private static int _resolvedGameId = int.MinValue;
     private static VoiceGamePhase _resolvedPhase = VoiceGamePhase.Unknown;
@@ -36,6 +38,7 @@ internal static partial class VoiceRoleMuteState
         byte JailorId,
         bool IsParasiteControlled,
         bool IsPuppeteerControlled,
+        bool IsCrewpostor,
         bool IsBlackmailedNextRound);
 
     internal static void Update()
@@ -114,7 +117,8 @@ internal static partial class VoiceRoleMuteState
             return false;
 
         GetPlayerRoleState(local, out bool isBlackmailed, out bool isJailed, out byte jailorId,
-            out bool isParasiteControlled, out bool isPuppeteerControlled, out bool isBlackmailedNextRound);
+            out bool isParasiteControlled, out bool isPuppeteerControlled, out bool isCrewpostor,
+            out bool isBlackmailedNextRound);
 
         var state = new CachedRoleState(
             isBlackmailed,
@@ -122,6 +126,7 @@ internal static partial class VoiceRoleMuteState
             jailorId,
             isParasiteControlled,
             isPuppeteerControlled,
+            isCrewpostor,
             isBlackmailedNextRound);
 
         var settings = VoiceRoomSettingsState.Current;
@@ -150,9 +155,9 @@ internal static partial class VoiceRoleMuteState
             return false;
 
         GetPlayerRoleState(local, out bool isBlackmailed, out bool isJailed, out byte jailorId,
-            out _, out _, out _);
+            out _, out _, out _, out _);
 
-        var state = new CachedRoleState(isBlackmailed, isJailed, jailorId, false, false, false);
+        var state = new CachedRoleState(isBlackmailed, isJailed, jailorId, false, false, false, false);
         if (!IsMeetingVoiceBlocked(local.PlayerId, state, VoiceRoomSettingsState.Current, out var blockReason))
             return false;
 
@@ -171,6 +176,7 @@ internal static partial class VoiceRoleMuteState
             player.JailorId,
             player.IsParasiteControlled,
             player.IsPuppeteerControlled,
+            false,
             player.IsBlackmailedNextRound);
 
         return IsMeetingVoiceBlocked(player.PlayerId, state, VoiceRoomSettingsState.Current, out _);
@@ -184,6 +190,7 @@ internal static partial class VoiceRoleMuteState
             player.JailorId,
             player.IsParasiteControlled,
             player.IsPuppeteerControlled,
+            false,
             player.IsBlackmailedNextRound);
 
         return IsMeetingVoiceBlocked(player.PlayerId, state, VoiceRoomSettingsState.Current, out var reason)
@@ -202,6 +209,7 @@ internal static partial class VoiceRoleMuteState
             player.JailorId,
             player.IsParasiteControlled,
             player.IsPuppeteerControlled,
+            false,
             player.IsBlackmailedNextRound);
 
         return IsTaskVoiceBlocked(player.PlayerId, state, VoiceRoomSettingsState.Current, out _);
@@ -215,6 +223,7 @@ internal static partial class VoiceRoleMuteState
             player.JailorId,
             player.IsParasiteControlled,
             player.IsPuppeteerControlled,
+            false,
             player.IsBlackmailedNextRound);
 
         return IsTaskVoiceBlocked(player.PlayerId, state, VoiceRoomSettingsState.Current, out var reason)
@@ -224,14 +233,25 @@ internal static partial class VoiceRoleMuteState
 
     internal static bool IsBlackmailed(PlayerControl? player)
     {
-        GetPlayerRoleState(player, out bool isBlackmailed, out _, out _, out _, out _, out _);
+        GetPlayerRoleState(player, out bool isBlackmailed, out _, out _, out _, out _, out _, out _);
         return isBlackmailed;
     }
 
     internal static bool TryGetJailorId(PlayerControl? player, out byte jailorId)
     {
-        GetPlayerRoleState(player, out _, out bool isJailed, out jailorId, out _, out _, out _);
+        GetPlayerRoleState(player, out _, out bool isJailed, out jailorId, out _, out _, out _, out _);
         return isJailed;
+    }
+
+    internal static bool IsVoiceImpostor(PlayerControl? player)
+    {
+        if (player?.Data?.Role?.IsImpostor == true)
+            return true;
+        if (!VoiceRoomSettingsState.Current.CrewpostorUsesImpostorVoice)
+            return false;
+
+        GetPlayerRoleState(player, out _, out _, out _, out _, out _, out bool isCrewpostor, out _);
+        return isCrewpostor;
     }
 
     internal static void GetPlayerRoleState(
@@ -241,6 +261,7 @@ internal static partial class VoiceRoleMuteState
         out byte jailorId,
         out bool isParasiteControlled,
         out bool isPuppeteerControlled,
+        out bool isCrewpostor,
         out bool isBlackmailedNextRound)
     {
         isBlackmailed = false;
@@ -248,6 +269,7 @@ internal static partial class VoiceRoleMuteState
         jailorId = byte.MaxValue;
         isParasiteControlled = false;
         isPuppeteerControlled = false;
+        isCrewpostor = false;
         isBlackmailedNextRound = false;
         if (player == null) return;
 
@@ -259,6 +281,7 @@ internal static partial class VoiceRoleMuteState
         jailorId = state.JailorId;
         isParasiteControlled = state.IsParasiteControlled;
         isPuppeteerControlled = state.IsPuppeteerControlled;
+        isCrewpostor = state.IsCrewpostor;
         isBlackmailedNextRound = state.IsBlackmailedNextRound;
     }
 

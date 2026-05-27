@@ -1,5 +1,15 @@
 # Changelog
 
+## Perfect Comms v2.0.6
+
+This Perfect Comms release adds more role-based voice rules and styling improvements.
+
+### What's Changed
+
+- Added Crewpostor support for impostor voice behavior, including impostor radio, vent voice behavior, and other impostor-only voice routing.
+
+See `docs/release-notes-v2.0.6.md` for the full release notes.
+
 ## Perfect Comms v2.0.5
 
 This Perfect Comms release adds role-based voice controls and improves voice button placement.

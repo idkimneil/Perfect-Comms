@@ -590,7 +590,7 @@ public static class VoiceChatHudState
 
     private static bool CanUseImpostorRadio()
         => PlayerControl.LocalPlayer != null
-        && PlayerControl.LocalPlayer.Data?.Role?.IsImpostor == true
+        && VoiceRoleMuteState.IsVoiceImpostor(PlayerControl.LocalPlayer)
         && PlayerControl.LocalPlayer.Data?.IsDead == false
         && VoiceChatGameOptions.GetInstance().ImpostorPrivateRadio.Value;
 

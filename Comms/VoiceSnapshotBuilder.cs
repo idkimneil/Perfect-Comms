@@ -30,6 +30,7 @@ internal static class VoiceSnapshotBuilder
                 out byte jailorId,
                 out bool isParasiteControlled,
                 out bool isPuppeteerControlled,
+                out _,
                 out bool isBlackmailedNextRound);
 
             players.Add(new VoicePlayerSnapshot(
@@ -39,7 +40,7 @@ internal static class VoiceSnapshotBuilder
                 (Vector2)player.transform.position,
                 player.PlayerId == localPlayerId,
                 data?.IsDead == true,
-                data?.Role?.IsImpostor == true,
+                VoiceRoleMuteState.IsVoiceImpostor(player),
                 player.inVent,
                 data?.Disconnected == true,
                 player.isDummy || player.notRealPlayer,

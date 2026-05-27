@@ -67,6 +67,7 @@ internal static class VoiceRoomSettingsRpc
         writer.Write(settings.JailorCanUnmuteJailed);
         writer.Write(settings.MuteParasiteControlled);
         writer.Write(settings.MutePuppeteerControlled);
+        writer.Write(settings.CrewpostorUsesImpostorVoice);
     }
 
     private static VoiceRoomSettingsSnapshot ReadSettings(MessageReader reader)
@@ -77,6 +78,7 @@ internal static class VoiceRoomSettingsRpc
             reader.ReadSingle(),
             reader.ReadInt32(),
             reader.ReadInt32(),
+            reader.ReadBoolean(),
             reader.ReadBoolean(),
             reader.ReadBoolean(),
             reader.ReadBoolean(),

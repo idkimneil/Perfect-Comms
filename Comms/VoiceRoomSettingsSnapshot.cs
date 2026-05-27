@@ -24,7 +24,8 @@ public readonly record struct VoiceRoomSettingsSnapshot(
     bool MuteJailedInMeetings,
     bool JailorCanUnmuteJailed,
     bool MuteParasiteControlled,
-    bool MutePuppeteerControlled)
+    bool MutePuppeteerControlled,
+    bool CrewpostorUsesImpostorVoice)
 {
     public const float MinChatDistance = 1.5f;
     public const float MaxChatDistanceLimit = 20f;
@@ -45,6 +46,7 @@ public readonly record struct VoiceRoomSettingsSnapshot(
         false,
         false,
         false,
+        true,
         true,
         true,
         true,
@@ -83,7 +85,8 @@ public readonly record struct VoiceRoomSettingsSnapshot(
             role.MuteJailedInMeetings.Value,
             role.JailorCanUnmuteJailed.Value,
             role.MuteParasiteControlled.Value,
-            role.MutePuppeteerControlled.Value).Clamp();
+            role.MutePuppeteerControlled.Value,
+            role.CrewpostorUsesImpostorVoice.Value).Clamp();
     }
 
     public VoiceRoomSettingsSnapshot Clamp()
