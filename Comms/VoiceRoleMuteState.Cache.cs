@@ -44,7 +44,8 @@ internal static partial class VoiceRoleMuteState
 
     private static CachedRoleState ReadRoleState(PlayerControl player)
     {
-        bool isBlackmailed = GetModifier(player, _blackmailedModifierType) != null;
+        bool isBlackmailed = GetModifier(player, _blackmailedModifierType) != null ||
+                              MeetingBlackmailedPlayers.Contains(player.PlayerId);
         bool isParasiteControlled = GetModifier(player, _parasiteInfectedModifierType) != null;
         bool isPuppeteerControlled = GetModifier(player, _puppeteerControlModifierType) != null;
         bool isCrewpostor = GetModifier(player, _crewpostorModifierType) != null;
@@ -150,7 +151,8 @@ internal static partial class VoiceRoleMuteState
         bool shouldProbe = phase is VoiceGamePhase.Lobby
             or VoiceGamePhase.Intro
             or VoiceGamePhase.Tasks
-            or VoiceGamePhase.Meeting;
+            or VoiceGamePhase.Meeting
+            or VoiceGamePhase.Exile;
         if (!shouldProbe) return;
 
         bool phaseChanged = phase != _resolvedPhase;

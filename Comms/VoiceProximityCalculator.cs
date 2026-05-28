@@ -38,6 +38,14 @@ internal static class VoiceProximityCalculator
         VoicePlayerSnapshot? targetPlayer,
         bool targetRadioActive,
         VoiceTeamRadioChannel targetRadioChannel = VoiceTeamRadioChannel.All)
+        => CalculateMeeting(localPlayer, targetPlayer, targetRadioActive, VoiceGamePhase.Meeting, targetRadioChannel);
+
+    public static VoiceProximityResult CalculateMeeting(
+        VoicePlayerSnapshot? localPlayer,
+        VoicePlayerSnapshot? targetPlayer,
+        bool targetRadioActive,
+        VoiceGamePhase phase,
+        VoiceTeamRadioChannel targetRadioChannel = VoiceTeamRadioChannel.All)
     {
         if (!targetPlayer.HasValue)
             return VoiceProximityResult.Muted(VoiceProximityReason.Unmapped);
@@ -50,8 +58,8 @@ internal static class VoiceProximityCalculator
         if (s.OnlyGhostsCanTalk && !localDead)
             return VoiceProximityResult.Muted(VoiceProximityReason.OnlyGhostsCanTalk);
 
-        if (VoiceRoleMuteState.IsMeetingVoiceBlocked(target))
-            return VoiceProximityResult.Muted(VoiceRoleMuteState.GetMeetingBlockReason(target));
+        if (VoiceRoleMuteState.IsMeetingVoiceBlocked(target, phase))
+            return VoiceProximityResult.Muted(VoiceRoleMuteState.GetMeetingBlockReason(target, phase));
 
         if (s.TeamRadio && targetRadioActive && !targetDead)
         {

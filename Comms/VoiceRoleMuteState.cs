@@ -72,9 +72,10 @@ internal static partial class VoiceRoleMuteState
     internal static void Update()
     {
         var settings = VoiceRoomSettingsState.Current;
-        bool inMeeting = MeetingHud.Instance != null;
+        var phase = VoiceSceneState.ResolvePhase();
+        bool inMeetingVoicePhase = VoiceSceneState.IsMeetingVoicePhase(phase);
 
-        if (inMeeting && !_wasInMeeting)
+        if (inMeetingVoicePhase && !_wasInMeeting)
         {
             PostMeetingBlackmailedPlayers.Clear();
             MeetingBlackmailedPlayers.Clear();
@@ -83,7 +84,7 @@ internal static partial class VoiceRoleMuteState
 
         RefreshRoleStateCacheIfNeeded();
 
-        if (inMeeting)
+        if (inMeetingVoicePhase)
         {
             _wasInMeeting = true;
             if (settings.MuteBlackmailedInMeetings)
@@ -94,6 +95,9 @@ internal static partial class VoiceRoleMuteState
             PruneJailVoiceAllowed(settings);
             return;
         }
+
+        if (_wasInMeeting && phase == VoiceGamePhase.Unknown)
+            return;
 
         if (_wasInMeeting)
         {
@@ -116,8 +120,7 @@ internal static partial class VoiceRoleMuteState
             InvalidateRoleStateCache();
         }
 
-        var phase = VoiceSceneState.ResolvePhase();
-        if (phase is VoiceGamePhase.Menu or VoiceGamePhase.Lobby or VoiceGamePhase.Intro or VoiceGamePhase.EndGame)
+        if (VoiceSceneState.IsLobbyVoicePhase(phase))
         {
             if (PostMeetingBlackmailedPlayers.Count > 0)
             {
@@ -130,7 +133,10 @@ internal static partial class VoiceRoleMuteState
     }
 
     internal static bool IsLocalVoiceBlocked()
-        => TryGetLocalVoiceBlockReason(out _);
+        => IsLocalVoiceBlocked(VoiceSceneState.ResolvePhase());
+
+    internal static bool IsLocalVoiceBlocked(VoiceGamePhase phase)
+        => TryGetLocalVoiceBlockReason(phase, out _);
 
     internal static bool IsLocalMeetingVoiceBlocked()
         => TryGetLocalMeetingVoiceBlockReason(out _);
@@ -169,6 +175,9 @@ internal static partial class VoiceRoleMuteState
             : result;
 
     internal static bool TryGetLocalVoiceBlockReason(out string reason)
+        => TryGetLocalVoiceBlockReason(VoiceSceneState.ResolvePhase(), out reason);
+
+    internal static bool TryGetLocalVoiceBlockReason(VoiceGamePhase phase, out string reason)
     {
         reason = string.Empty;
         Update();
@@ -202,19 +211,22 @@ internal static partial class VoiceRoleMuteState
             byte.MaxValue);
 
         var settings = VoiceRoomSettingsState.Current;
-        if (settings.MuteGlitchHacked && state.IsGlitchHacked)
+        bool meetingVoicePhase = VoiceSceneState.IsMeetingVoicePhase(phase);
+        bool taskVoicePhase = VoiceSceneState.IsTaskVoicePhase(phase);
+
+        if ((meetingVoicePhase || taskVoicePhase) && settings.MuteGlitchHacked && state.IsGlitchHacked)
         {
             reason = ToDisplayReason(VoiceProximityReason.GlitchHacked);
             return true;
         }
 
-        if (MeetingHud.Instance != null && IsMeetingVoiceBlocked(local.PlayerId, state, settings, out var meetingReason))
+        if (meetingVoicePhase && IsMeetingVoiceBlocked(local.PlayerId, state, settings, out var meetingReason))
         {
             reason = ToDisplayReason(meetingReason);
             return true;
         }
 
-        if (IsTaskVoiceBlocked(local.PlayerId, state, settings, out var taskReason))
+        if (taskVoicePhase && IsTaskVoiceBlocked(local.PlayerId, state, settings, out var taskReason))
         {
             reason = ToDisplayReason(taskReason);
             return true;
@@ -229,7 +241,8 @@ internal static partial class VoiceRoleMuteState
         Update();
 
         var local = PlayerControl.LocalPlayer;
-        if (local == null || MeetingHud.Instance == null || local.Data?.IsDead == true)
+        var phase = VoiceSceneState.ResolvePhase();
+        if (local == null || !VoiceSceneState.IsMeetingVoicePhase(phase) || local.Data?.IsDead == true)
             return false;
 
         GetPlayerRoleState(local, out bool isBlackmailed, out bool isJailed, out byte jailorId,
@@ -250,8 +263,11 @@ internal static partial class VoiceRoleMuteState
     }
 
     internal static bool IsMeetingVoiceBlocked(VoicePlayerSnapshot player)
+        => IsMeetingVoiceBlocked(player, VoiceSceneState.ResolvePhase());
+
+    internal static bool IsMeetingVoiceBlocked(VoicePlayerSnapshot player, VoiceGamePhase phase)
     {
-        if (MeetingHud.Instance == null || player.IsDead)
+        if (!VoiceSceneState.IsMeetingVoicePhase(phase) || player.IsDead)
             return false;
 
         var state = new CachedRoleState(
@@ -277,7 +293,13 @@ internal static partial class VoiceRoleMuteState
     }
 
     internal static VoiceProximityReason GetMeetingBlockReason(VoicePlayerSnapshot player)
+        => GetMeetingBlockReason(player, VoiceSceneState.ResolvePhase());
+
+    internal static VoiceProximityReason GetMeetingBlockReason(VoicePlayerSnapshot player, VoiceGamePhase phase)
     {
+        if (!VoiceSceneState.IsMeetingVoicePhase(phase))
+            return VoiceProximityReason.MeetingLiving;
+
         var state = new CachedRoleState(
             player.IsBlackmailed,
             player.IsJailed,
@@ -508,7 +530,7 @@ internal static partial class VoiceRoleMuteState
             return false;
 
         var local = PlayerControl.LocalPlayer;
-        if (local == null || MeetingHud.Instance == null || local.Data?.IsDead == true || !IsJailor(local))
+        if (local == null || !VoiceSceneState.IsMeetingVoicePhase(VoiceSceneState.ResolvePhase()) || local.Data?.IsDead == true || !IsJailor(local))
             return false;
 
         foreach (var player in PlayerControl.AllPlayerControls)

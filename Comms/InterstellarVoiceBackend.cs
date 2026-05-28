@@ -790,9 +790,6 @@ internal sealed class InterstellarVoiceBackend : IVoiceBackend
 
         var localPlayer = snapshot.TryGetLocalPlayer(out var local) ? local : (VoicePlayerSnapshot?)null;
         var listenerPos = localPlayer?.Position;
-        bool inLobby = snapshot.Phase == VoiceGamePhase.Lobby;
-        bool inMeeting = snapshot.Phase == VoiceGamePhase.Meeting;
-        bool inTask = snapshot.Phase == VoiceGamePhase.Tasks;
 
         foreach (var peer in _peers.Values.ToArray())
         {
@@ -804,10 +801,10 @@ internal sealed class InterstellarVoiceBackend : IVoiceBackend
                 ApplySavedVolume(peer);
 
             VoiceProximityResult result;
-            if (inLobby || !inTask && !inMeeting)
+            if (VoiceSceneState.IsLobbyVoicePhase(snapshot.Phase))
                 result = VoiceProximityCalculator.CalculateLobby(target, listenerPos);
-            else if (inMeeting)
-                result = VoiceProximityCalculator.CalculateMeeting(localPlayer, target, peer.RadioActive, peer.RadioChannel);
+            else if (VoiceSceneState.IsMeetingVoicePhase(snapshot.Phase))
+                result = VoiceProximityCalculator.CalculateMeeting(localPlayer, target, peer.RadioActive, snapshot.Phase, peer.RadioChannel);
             else
                 result = VoiceProximityCalculator.CalculateTaskPhase(localPlayer, target, listenerPos, snapshot.LocalLightRadius, snapshot.MapId, snapshot.CameraViewActive, snapshot.ActiveCameraIndex, snapshot.ActiveCameraPosition, speakerCache, virtualMicrophones, localInVent, peer.RadioActive, commsSabActive, peer.WallCoefficient, peer.RadioChannel);
 

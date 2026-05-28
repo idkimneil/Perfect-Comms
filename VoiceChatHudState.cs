@@ -344,7 +344,7 @@ public static class VoiceChatHudState
         bool pushToTalkMode  = settings?.MicMode.Value == VoiceMicMode.PushToTalk;
         if (pushToTalkMode && _micMuted) _micMuted = false;
         bool pushToTalkMuted = pushToTalkMode && !_pushToTalkHeld && !radioTransmit;
-        bool roleMuted       = VoiceRoleMuteState.IsLocalVoiceBlocked();
+        bool roleMuted       = VoiceRoleMuteState.IsLocalVoiceBlocked(VoiceSceneState.ResolvePhase());
         VoiceChatRoom.Current?.SetMute(_speakerMuted || _micMuted || pushToTalkMuted || roleMuted);
     }
 
