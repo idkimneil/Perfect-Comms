@@ -1,5 +1,18 @@
 # Changelog
 
+## Perfect Comms v2.0.7
+
+This Perfect Comms release fixes transitional voice routing around exile and other non-gameplay phases.
+
+### What's Changed
+
+- Changed Exile to use meeting-style voice routing instead of falling back to lobby proximity.
+- Preserved meeting mutes during Exile, so blackmailed and jailed players stay muted through the exile sequence.
+- Kept task-only role mutes out of lobby-like phases such as Intro, EndGame, Menu, and Unknown.
+- Shared the same phase policy across BetterCrewLink and Interstellar so both backends route transitions consistently.
+
+See `docs/release-notes-v2.0.7.md` for the full release notes.
+
 ## Perfect Comms v2.0.6
 
 This Perfect Comms release expands role-aware voice behavior and adds team radio channels.
