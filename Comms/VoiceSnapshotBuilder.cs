@@ -36,6 +36,13 @@ internal static class VoiceSnapshotBuilder
                 out byte loverPartnerId,
                 out bool isBlackmailedNextRound,
                 out bool isSwooped);
+            VoiceRoleMuteState.GetPlayerMediumVoiceState(
+                player,
+                out bool isMedium,
+                out bool hasMediumSpirit,
+                out Vector2 mediumSpiritPosition,
+                out bool isMediatedGhost,
+                out byte mediatingMediumId);
 
             players.Add(new VoicePlayerSnapshot(
                 player.PlayerId,
@@ -58,7 +65,12 @@ internal static class VoiceSnapshotBuilder
                 isParasiteControlled,
                 isPuppeteerControlled,
                 isBlackmailedNextRound,
-                isSwooped));
+                isSwooped,
+                isMedium,
+                hasMediumSpirit,
+                mediumSpiritPosition,
+                isMediatedGhost,
+                mediatingMediumId));
         }
 
         return new VoiceGameStateSnapshot(

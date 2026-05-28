@@ -18,6 +18,8 @@ internal static partial class VoiceRoleMuteState
             _loverModifierType == null &&
             _swoopModifierType == null &&
             _vampireRoleType == null &&
+            _mediumRoleType == null &&
+            _mediatedModifierType == null &&
             PostMeetingBlackmailedPlayers.Count == 0)
         {
             RoleStateCache.Clear();
@@ -43,10 +45,16 @@ internal static partial class VoiceRoleMuteState
         bool isPuppeteerControlled = GetModifier(player, _puppeteerControlModifierType) != null;
         bool isCrewpostor = GetModifier(player, _crewpostorModifierType) != null;
         bool isVampire = IsRole(player, _vampireRoleType, VampireRoleName);
+        bool isMedium = IsRole(player, _mediumRoleType, MediumRoleName);
+        Vector2 mediumSpiritPosition = default;
+        bool hasMediumSpirit = isMedium && player.Data?.IsDead != true && TryGetMediumSpiritPosition(player, out mediumSpiritPosition);
         var loverModifier = GetModifier(player, _loverModifierType);
         bool isLover = loverModifier != null;
         byte loverPartnerId = GetLoverPartnerId(loverModifier);
         bool isSwooped = GetModifier(player, _swoopModifierType) != null;
+        var mediatedModifier = GetModifier(player, _mediatedModifierType);
+        bool isMediatedGhost = mediatedModifier != null && player.Data?.IsDead == true;
+        byte mediatingMediumId = isMediatedGhost ? GetMediatingMediumId(mediatedModifier) : byte.MaxValue;
         bool isBlackmailedNextRound = PostMeetingBlackmailedPlayers.Contains(player.PlayerId);
         byte jailorId = byte.MaxValue;
         bool isJailed = false;
@@ -80,7 +88,12 @@ internal static partial class VoiceRoleMuteState
             isLover,
             loverPartnerId,
             isBlackmailedNextRound,
-            isSwooped);
+            isSwooped,
+            isMedium,
+            hasMediumSpirit,
+            mediumSpiritPosition,
+            isMediatedGhost,
+            mediatingMediumId);
     }
 
     private static BaseModifier? GetModifier(PlayerControl player, Type? type)
@@ -121,6 +134,8 @@ internal static partial class VoiceRoleMuteState
         _loverModifierType = ResolveType(LoverModifierName);
         _swoopModifierType = ResolveType(SwoopModifierName);
         _vampireRoleType = ResolveType(VampireRoleName);
+        _mediumRoleType = ResolveType(MediumRoleName);
+        _mediatedModifierType = ResolveType(MediatedModifierName);
         _supportedModTypesResolved = true;
         InvalidateRoleStateCache();
     }
@@ -187,6 +202,55 @@ internal static partial class VoiceRoleMuteState
         catch
         {
             return false;
+        }
+    }
+
+    private static bool TryGetMediumSpiritPosition(PlayerControl player, out Vector2 position)
+    {
+        position = default;
+        var role = player.Data?.Role;
+        if (role == null) return false;
+
+        try
+        {
+            object? spirit = role.GetType().GetProperty("Spirit")?.GetValue(role);
+            switch (spirit)
+            {
+                case Component component:
+                    position = component.transform.position;
+                    return true;
+                case GameObject gameObject:
+                    position = gameObject.transform.position;
+                    return true;
+            }
+
+            if (spirit == null) return false;
+            if (spirit.GetType().GetProperty("transform")?.GetValue(spirit) is Transform transform)
+            {
+                position = transform.position;
+                return true;
+            }
+        }
+        catch
+        {
+            return false;
+        }
+
+        return false;
+    }
+
+    private static byte GetMediatingMediumId(BaseModifier? modifier)
+    {
+        if (modifier == null) return byte.MaxValue;
+
+        try
+        {
+            object? value = modifier.GetType().GetProperty("MediumId")?.GetValue(modifier);
+            return value is byte id ? id : byte.MaxValue;
+        }
+        catch
+        {
+            return byte.MaxValue;
         }
     }
 

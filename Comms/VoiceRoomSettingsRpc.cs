@@ -72,6 +72,7 @@ internal static class VoiceRoomSettingsRpc
         writer.Write(settings.MutePuppeteerControlled);
         writer.Write(settings.CrewpostorUsesImpostorVoice);
         writer.Write(settings.MuteSwooperWhileSwooped);
+        writer.Write(settings.MediumGhostVoice);
     }
 
     private static VoiceRoomSettingsSnapshot ReadSettings(MessageReader reader)
@@ -126,7 +127,8 @@ internal static class VoiceRoomSettingsRpc
             reader.ReadBoolean(),
             reader.ReadBoolean(),
             reader.ReadBoolean(),
-            reader.BytesRemaining > 0 ? reader.ReadBoolean() : true).Clamp();
+            reader.BytesRemaining > 0 ? reader.ReadBoolean() : true,
+            reader.BytesRemaining >= 4 ? reader.ReadInt32() : (int)MediumGhostVoiceMode.None).Clamp();
     }
 
     [HarmonyPatch(typeof(PlayerControl), nameof(PlayerControl.HandleRpc))]

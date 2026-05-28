@@ -29,7 +29,8 @@ public readonly record struct VoiceRoomSettingsSnapshot(
     bool MuteParasiteControlled,
     bool MutePuppeteerControlled,
     bool CrewpostorUsesImpostorVoice,
-    bool MuteSwooperWhileSwooped)
+    bool MuteSwooperWhileSwooped,
+    int MediumGhostVoice)
 {
     public const float MinChatDistance = 1.5f;
     public const float MaxChatDistanceLimit = 20f;
@@ -60,7 +61,8 @@ public readonly record struct VoiceRoomSettingsSnapshot(
         true,
         true,
         true,
-        true);
+        true,
+        (int)MediumGhostVoiceMode.None);
 
     public static VoiceRoomSettingsSnapshot FromGameOptions()
     {
@@ -98,7 +100,8 @@ public readonly record struct VoiceRoomSettingsSnapshot(
             role.MuteParasiteControlled.Value,
             role.MutePuppeteerControlled.Value,
             role.CrewpostorUsesImpostorVoice.Value,
-            role.MuteSwooperWhileSwooped.Value).Clamp();
+            role.MuteSwooperWhileSwooped.Value,
+            role.MediumGhostVoice.Value).Clamp();
     }
 
     public VoiceRoomSettingsSnapshot Clamp()
@@ -110,6 +113,7 @@ public readonly record struct VoiceRoomSettingsSnapshot(
             MaxChatDistance = Math.Clamp(MaxChatDistance, MinChatDistance, MaxChatDistanceLimit),
             FalloffMode = Enum.IsDefined(typeof(VoiceFalloffMode), FalloffMode) ? FalloffMode : (int)VoiceFalloffMode.Smooth,
             OcclusionMode = Enum.IsDefined(typeof(VoiceOcclusionMode), OcclusionMode) ? OcclusionMode : (int)VoiceOcclusionMode.VisionOnly,
+            MediumGhostVoice = Enum.IsDefined(typeof(MediumGhostVoiceMode), MediumGhostVoice) ? MediumGhostVoice : (int)MediumGhostVoiceMode.None,
         };
     }
 

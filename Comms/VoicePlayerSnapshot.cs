@@ -23,4 +23,9 @@ internal readonly record struct VoicePlayerSnapshot(
     bool IsParasiteControlled,
     bool IsPuppeteerControlled,
     bool IsBlackmailedNextRound,
-    bool IsSwooped);
+    bool IsSwooped,
+    bool IsMedium,
+    bool HasMediumSpirit,
+    Vector2 MediumSpiritPosition,
+    bool IsMediatedGhost,
+    byte MediatingMediumId);

@@ -17,6 +17,8 @@ internal static partial class VoiceRoleMuteState
     private const string SwoopModifierName = "TownOfUs.Modifiers.Impostor.SwoopModifier";
     private const string JailorRoleName = "TownOfUs.Roles.Crewmate.JailorRole";
     private const string VampireRoleName = "TownOfUs.Roles.Neutral.VampireRole";
+    private const string MediumRoleName = "TownOfUs.Roles.Crewmate.MediumRole";
+    private const string MediatedModifierName = "TownOfUs.Modifiers.Crewmate.MediatedModifier";
     private const float RoleStateRefreshInterval = 0.25f;
 
     private static readonly HashSet<byte> JailVoiceAllowed = new();
@@ -32,6 +34,8 @@ internal static partial class VoiceRoleMuteState
     private static Type? _loverModifierType;
     private static Type? _swoopModifierType;
     private static Type? _vampireRoleType;
+    private static Type? _mediumRoleType;
+    private static Type? _mediatedModifierType;
     private static bool _supportedModTypesResolved;
     private static int _resolvedGameId = int.MinValue;
     private static VoiceGamePhase _resolvedPhase = VoiceGamePhase.Unknown;
@@ -49,7 +53,12 @@ internal static partial class VoiceRoleMuteState
         bool IsLover,
         byte LoverPartnerId,
         bool IsBlackmailedNextRound,
-        bool IsSwooped);
+        bool IsSwooped,
+        bool IsMedium,
+        bool HasMediumSpirit,
+        Vector2 MediumSpiritPosition,
+        bool IsMediatedGhost,
+        byte MediatingMediumId);
 
     internal static void Update()
     {
@@ -142,7 +151,12 @@ internal static partial class VoiceRoleMuteState
             isLover,
             loverPartnerId,
             isBlackmailedNextRound,
-            isSwooped);
+            isSwooped,
+            false,
+            false,
+            default,
+            false,
+            byte.MaxValue);
 
         var settings = VoiceRoomSettingsState.Current;
         if (MeetingHud.Instance != null && IsMeetingVoiceBlocked(local.PlayerId, state, settings, out var meetingReason))
@@ -172,7 +186,7 @@ internal static partial class VoiceRoleMuteState
         GetPlayerRoleState(local, out bool isBlackmailed, out bool isJailed, out byte jailorId,
             out _, out _, out _, out _, out _, out _, out _, out bool isSwooped);
 
-        var state = new CachedRoleState(isBlackmailed, isJailed, jailorId, false, false, false, false, false, byte.MaxValue, false, isSwooped);
+        var state = new CachedRoleState(isBlackmailed, isJailed, jailorId, false, false, false, false, false, byte.MaxValue, false, isSwooped, false, false, default, false, byte.MaxValue);
         if (!IsMeetingVoiceBlocked(local.PlayerId, state, VoiceRoomSettingsState.Current, out var blockReason))
             return false;
 
@@ -196,7 +210,12 @@ internal static partial class VoiceRoleMuteState
             player.IsLover,
             player.LoverPartnerId,
             player.IsBlackmailedNextRound,
-            player.IsSwooped);
+            player.IsSwooped,
+            player.IsMedium,
+            player.HasMediumSpirit,
+            player.MediumSpiritPosition,
+            player.IsMediatedGhost,
+            player.MediatingMediumId);
 
         return IsMeetingVoiceBlocked(player.PlayerId, state, VoiceRoomSettingsState.Current, out _);
     }
@@ -214,7 +233,12 @@ internal static partial class VoiceRoleMuteState
             player.IsLover,
             player.LoverPartnerId,
             player.IsBlackmailedNextRound,
-            player.IsSwooped);
+            player.IsSwooped,
+            player.IsMedium,
+            player.HasMediumSpirit,
+            player.MediumSpiritPosition,
+            player.IsMediatedGhost,
+            player.MediatingMediumId);
 
         return IsMeetingVoiceBlocked(player.PlayerId, state, VoiceRoomSettingsState.Current, out var reason)
             ? reason
@@ -237,7 +261,12 @@ internal static partial class VoiceRoleMuteState
             player.IsLover,
             player.LoverPartnerId,
             player.IsBlackmailedNextRound,
-            player.IsSwooped);
+            player.IsSwooped,
+            player.IsMedium,
+            player.HasMediumSpirit,
+            player.MediumSpiritPosition,
+            player.IsMediatedGhost,
+            player.MediatingMediumId);
 
         return IsTaskVoiceBlocked(player.PlayerId, state, VoiceRoomSettingsState.Current, out _);
     }
@@ -255,7 +284,12 @@ internal static partial class VoiceRoleMuteState
             player.IsLover,
             player.LoverPartnerId,
             player.IsBlackmailedNextRound,
-            player.IsSwooped);
+            player.IsSwooped,
+            player.IsMedium,
+            player.HasMediumSpirit,
+            player.MediumSpiritPosition,
+            player.IsMediatedGhost,
+            player.MediatingMediumId);
 
         return IsTaskVoiceBlocked(player.PlayerId, state, VoiceRoomSettingsState.Current, out var reason)
             ? reason
@@ -375,6 +409,31 @@ internal static partial class VoiceRoleMuteState
         loverPartnerId = state.LoverPartnerId;
         isBlackmailedNextRound = state.IsBlackmailedNextRound;
         isSwooped = state.IsSwooped;
+    }
+
+    internal static void GetPlayerMediumVoiceState(
+        PlayerControl? player,
+        out bool isMedium,
+        out bool hasMediumSpirit,
+        out Vector2 mediumSpiritPosition,
+        out bool isMediatedGhost,
+        out byte mediatingMediumId)
+    {
+        isMedium = false;
+        hasMediumSpirit = false;
+        mediumSpiritPosition = default;
+        isMediatedGhost = false;
+        mediatingMediumId = byte.MaxValue;
+        if (player == null) return;
+
+        RefreshRoleStateCacheIfNeeded();
+        if (!RoleStateCache.TryGetValue(player.PlayerId, out var state)) return;
+
+        isMedium = state.IsMedium;
+        hasMediumSpirit = state.HasMediumSpirit;
+        mediumSpiritPosition = state.MediumSpiritPosition;
+        isMediatedGhost = state.IsMediatedGhost;
+        mediatingMediumId = state.MediatingMediumId;
     }
 
     internal static bool CanLocalJailorUnmute(out byte jailedPlayerId)

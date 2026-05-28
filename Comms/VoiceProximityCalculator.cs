@@ -96,7 +96,7 @@ internal static class VoiceProximityCalculator
         var s = VoiceRoomSettingsState.Current;
         var target = targetPlayer.Value;
         var targetPos = target.Position;
-        var localListenerPos = listenerPos.Value;
+        var localListenerPos = ResolveListenerPosition(localPlayer, listenerPos.Value);
         Vector2 cameraPosition = default;
         bool hasCameraProxy = s.CameraCanHear && VoiceAudioOcclusion.TryGetCameraListenerPosition(
             mapId,
@@ -110,12 +110,19 @@ internal static class VoiceProximityCalculator
         bool localImp = localPlayer?.IsImpostor == true;
         bool targetImp = target.IsImpostor;
         bool targetInVent = target.InVent;
+        bool localMediatingMedium = IsMediatingMedium(localPlayer) &&
+                                     (MediumGhostVoiceMode)s.MediumGhostVoice != MediumGhostVoiceMode.None;
 
         if (s.OnlyMeetingOrLobby)
             return VoiceProximityResult.Muted(VoiceProximityReason.OnlyMeetingOrLobby, previousWallCoefficient);
-        if (s.OnlyGhostsCanTalk && !localDead)
+
+        var mediumGhostRoute = TryCalculateMediumGhostRoute(localPlayer, target, localListenerPos, s, previousWallCoefficient);
+        if (mediumGhostRoute.HasValue)
+            return mediumGhostRoute.Value;
+
+        if (s.OnlyGhostsCanTalk && !localDead && !localMediatingMedium)
             return VoiceProximityResult.Muted(VoiceProximityReason.OnlyGhostsCanTalk, previousWallCoefficient);
-        if (commsSabActive && s.CommsSabDisables && !localDead)
+        if (commsSabActive && s.CommsSabDisables && !localDead && !localMediatingMedium)
             return VoiceProximityResult.Muted(VoiceProximityReason.CommsSabotage, previousWallCoefficient);
 
         if (VoiceRoleMuteState.IsTaskVoiceBlocked(target))
@@ -244,6 +251,91 @@ internal static class VoiceProximityCalculator
                 (settings.TeamRadioLovers && AreLinkedLovers(local, target)),
             _ => false,
         };
+    }
+
+    private static VoiceProximityResult? TryCalculateMediumGhostRoute(
+        VoicePlayerSnapshot? localPlayer,
+        VoicePlayerSnapshot target,
+        Vector2 listenerPos,
+        VoiceRoomSettingsSnapshot settings,
+        float wallCoefficient)
+    {
+        if (!localPlayer.HasValue)
+            return null;
+
+        var local = localPlayer.Value;
+        var mode = (MediumGhostVoiceMode)settings.MediumGhostVoice;
+        if (mode == MediumGhostVoiceMode.None)
+            return null;
+
+        if (target.IsMedium && target.HasMediumSpirit)
+        {
+            if (MediumCanTalkToGhosts(mode))
+            {
+                if (local.IsDead)
+                    return CalculateMediumSpatialRoute(
+                        target.MediumSpiritPosition,
+                        listenerPos,
+                        settings,
+                        wallCoefficient,
+                        VoiceProximityReason.MediumSpeaksToGhost,
+                        ghostOutput: false);
+
+                return VoiceProximityResult.Muted(VoiceProximityReason.MediumPrivateFromLiving, wallCoefficient);
+            }
+
+            if (local.IsDead)
+                return VoiceProximityResult.Muted(VoiceProximityReason.NonSelectedGhostMuted, wallCoefficient);
+
+            return VoiceProximityResult.Muted(VoiceProximityReason.MediumPrivateFromLiving, wallCoefficient);
+        }
+
+        if (local.IsMedium && local.HasMediumSpirit && target.IsDead && GhostCanTalkToMedium(mode))
+        {
+            if (!target.IsMediatedGhost || target.MediatingMediumId != local.PlayerId)
+                return VoiceProximityResult.Muted(VoiceProximityReason.NonSelectedGhostMuted, wallCoefficient);
+
+            return CalculateMediumSpatialRoute(
+                target.Position,
+                local.MediumSpiritPosition,
+                settings,
+                wallCoefficient,
+                VoiceProximityReason.GhostSpeaksToMedium,
+                ghostOutput: true);
+        }
+
+        return null;
+    }
+
+    private static bool IsMediatingMedium(VoicePlayerSnapshot? player)
+        => player.HasValue && player.Value.IsMedium && player.Value.HasMediumSpirit;
+
+    private static bool MediumCanTalkToGhosts(MediumGhostVoiceMode mode)
+        => mode is MediumGhostVoiceMode.MediumToGhost or MediumGhostVoiceMode.Both;
+
+    private static bool GhostCanTalkToMedium(MediumGhostVoiceMode mode)
+        => mode is MediumGhostVoiceMode.GhostToMedium or MediumGhostVoiceMode.Both;
+
+    private static Vector2 ResolveListenerPosition(VoicePlayerSnapshot? localPlayer, Vector2 fallback)
+        => IsMediatingMedium(localPlayer) ? localPlayer!.Value.MediumSpiritPosition : fallback;
+
+    private static VoiceProximityResult CalculateMediumSpatialRoute(
+        Vector2 sourcePos,
+        Vector2 listenerPos,
+        VoiceRoomSettingsSnapshot settings,
+        float wallCoefficient,
+        VoiceProximityReason reason,
+        bool ghostOutput)
+    {
+        float dist = Distance(sourcePos, listenerPos);
+        float volume = VoiceAudioOcclusion.ApplyFalloff(dist, settings.MaxChatDistance, (VoiceFalloffMode)settings.FalloffMode);
+        if (volume < 0.06f)
+            volume = 0f;
+
+        float pan = VoiceChatRoom.GetPan(listenerPos.x, sourcePos.x);
+        return ghostOutput
+            ? new(0f, volume, 0f, pan, VoiceAudioFilterMode.Ghost, volume > 0f, reason, wallCoefficient)
+            : new(volume, 0f, 0f, pan, VoiceAudioFilterMode.None, volume > 0f, reason, wallCoefficient);
     }
 
     private static bool AreLinkedLovers(VoicePlayerSnapshot local, VoicePlayerSnapshot target)
