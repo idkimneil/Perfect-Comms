@@ -1,5 +1,16 @@
 # Changelog
 
+## Perfect Comms v2.1.1
+
+This Perfect Comms release fixes an echo / doubled-voice bug that built up during a match whenever players' connections dropped and reconnected.
+
+### What's Changed
+
+- Fixed an "echoey" / doubled-voice bug: when a player's connection dropped and reconnected, their old voice channel was left running instead of being cleaned up, so the same player could be heard more than once and unused "zombie" channels piled up over the match. Each player now keeps exactly one live voice channel, and the stale one is torn down on reconnect.
+- Reduced the matching slow build-up of wasted voice processing those leftover channels caused, so longer games stay lighter on CPU and audio.
+
+See `docs/release-notes-v2.1.1.md` for the full release notes.
+
 ## Perfect Comms v2.1.0
 
 This Perfect Comms release adds new ways to arrange the speaking bar, gives the Parasite and Puppeteer their own special hearing, and polishes the speaking-bar player icons.
