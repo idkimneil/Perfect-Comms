@@ -1034,11 +1034,25 @@ internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
         }
 
         bool changed;
+        string? supersededSocket = null;
         lock (_peerSync)
         {
             changed = !_socketToClient.TryGetValue(socketId, out var oldClientId) || oldClientId != client.clientId;
+            // A client whose Socket.IO id rotated (reconnect/churn) re-maps to a NEW socket under the same
+            // stable client id. The previous socket's peer is now orphaned and nothing else tears it down,
+            // so a single client accumulates duplicate peers + decoder/jitter/playback sinks. That leak
+            // inflates peers/openChannels and briefly double-plays a talkspurt across the handoff — the
+            // "echoey" bug report. Evict the superseded socket so it stays one peer + one sink per client.
+            if (_clientToSocket.TryGetValue(client.clientId, out var priorSocket)
+                && !string.Equals(priorSocket, socketId, StringComparison.Ordinal))
+                supersededSocket = priorSocket;
             _clientToSocket[client.clientId] = socketId;
             _socketToClient[socketId] = client.clientId;
+        }
+        if (supersededSocket != null)
+        {
+            VoiceDiagnostics.Log("bcl.peer.superseded", $"oldSocket={supersededSocket} newSocket={socketId} client={client.clientId}");
+            RemovePeer(supersededSocket);
         }
         if (changed)
         {
@@ -2043,8 +2057,11 @@ internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
 
     private string[] SnapshotMappedSocketIds()
     {
+        // Every mapped socket, not just the newest per client: _clientToSocket.Values keeps only the latest
+        // socket per client, so a stale duplicate socket could never be reached by the setClients prune and
+        // would leak. Snapshotting the socket keys lets the prune reclaim any socket the server dropped.
         lock (_peerSync)
-            return _clientToSocket.Values.ToArray();
+            return _socketToClient.Keys.ToArray();
     }
 
     private RTCDataChannel[] SnapshotOpenChannels()
@@ -2062,10 +2079,15 @@ internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
         PeerConnection? peer;
         lock (_peerSync)
         {
-            if (!_peersBySocket.Remove(socketId, out peer)) return;
-            if (_socketToClient.TryGetValue(socketId, out var clientId))
+            _peersBySocket.Remove(socketId, out peer);
+            // Only drop the client->socket mapping if it still points at THIS socket. After a client
+            // re-homes, _clientToSocket[clientId] already points at the new socket, so reclaiming the
+            // superseded socket must not clobber the live mapping. Always clear the socket-side maps even
+            // when no peer was attached yet, so a mapped-but-peerless socket can't leak a stale entry.
+            if (_socketToClient.Remove(socketId, out var clientId)
+                && _clientToSocket.TryGetValue(clientId, out var mappedSocket)
+                && string.Equals(mappedSocket, socketId, StringComparison.Ordinal))
                 _clientToSocket.Remove(clientId);
-            _socketToClient.Remove(socketId);
             _pendingSignalsBySocket.Remove(socketId);
         }
         if (peer == null) return;
