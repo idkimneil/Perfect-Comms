@@ -1,5 +1,17 @@
 # Changelog
 
+## Perfect Comms v2.1.2
+
+This Perfect Comms release is a big stutter-and-lag-spike fix — if voice was making your game hitch, freeze, or drop, it should feel much smoother now.
+
+### What's Changed
+
+- **Much smoother voice** — the stutters and lag spikes around joining, talking, and hearing players should be greatly reduced.
+- **Nat Fix (on by default)** — helps players behind strict NATs or firewalls connect when they couldn't before.
+- **Steadier connections** that recover more gracefully instead of constantly dropping and retrying.
+
+See `docs/release-notes-v2.1.2.md` for the full release notes.
+
 ## Perfect Comms v2.1.1
 
 This Perfect Comms release fixes an echo / doubled-voice bug that built up during a match whenever players' connections dropped and reconnected.
