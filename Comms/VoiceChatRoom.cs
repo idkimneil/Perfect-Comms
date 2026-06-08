@@ -57,6 +57,8 @@ public class VoiceChatRoom
     private InterstellarVoiceBackend? _interstellarVoice;
     private BetterCrewLinkVoiceBackend? _betterCrewLinkVoice;
     private VoiceRoomSettingsSnapshot? _lastSentHostSettings;
+    private DateTime _lastSentHostSettingsUtc = DateTime.MinValue;
+    private const double MinHostSettingsSnapshotIntervalSeconds = 1.0;
     private DateTime _lastHostSettingsRequestUtc = DateTime.MinValue;
     private int _lastObservedHostClientId = -1;
     private bool _hostSettingsResyncPending;
@@ -506,13 +508,19 @@ public class VoiceChatRoom
         if (!IsLocalHost() || _voiceBackend == null) return;
 
         var settings = VoiceRoomSettingsSnapshot.FromGameOptions();
-        if (!force && _lastSentHostSettings.HasValue && _lastSentHostSettings.Value.Equals(settings))
-            return;
+        if (!force)
+        {
+            if (_lastSentHostSettings.HasValue && _lastSentHostSettings.Value.Equals(settings))
+                return;
+            if ((DateTime.UtcNow - _lastSentHostSettingsUtc).TotalSeconds < MinHostSettingsSnapshotIntervalSeconds)
+                return;
+        }
 
         // Authority only via authenticated Among Us RPC; the side-channel's self-asserted
         // sender id would let any peer forge host voice settings.
         VoiceRoomSettingsRpc.SendSnapshot(settings);
         _lastSentHostSettings = settings;
+        _lastSentHostSettingsUtc = DateTime.UtcNow;
         VoiceDiagnostics.Log("settings.sent", $"kind=host-snapshot transport={_activeBackend} rpc=true");
     }
 
