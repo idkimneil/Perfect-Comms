@@ -1886,9 +1886,15 @@ internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
     {
         var socket = _socket;
         if (socket == null) return;
-        var signalData = JsonSerializer.Serialize(new { type = "request-offer" });
+        // Tell the initiator whether OUR link is genuinely wedged (channel non-open/dead). The open initiator
+        // honors a wedged request-offer and rebuilds even when ITS channel reads 'open' (the split-brain case),
+        // bounded by its per-peer recovery backoff. Reflects our live link state at send time.
+        bool senderLinkWedged;
+        lock (_peerSync)
+            senderLinkWedged = _peersBySocket.TryGetValue(socketId, out var peer) && LocalLinkNeedsRebuild(peer);
+        var signalData = JsonSerializer.Serialize(new { type = "request-offer", rebuild = senderLinkWedged });
         _ = socket.EmitAsync("signal", new object[] { new { to = socketId, data = signalData } });
-        VoiceDiagnostics.Log("bcl.offer", $"reason=request socket={socketId}");
+        VoiceDiagnostics.Log("bcl.offer", $"reason=request socket={socketId} rebuild={senderLinkWedged.ToString().ToLowerInvariant()}");
     }
 
     // Exponential reconnect backoff: 3s, 6s, 12s, 24s, capped at 30s. The first retries stay fast so a one-off
@@ -1998,8 +2004,10 @@ internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
         if (signal.Kind == "request-offer")
         {
             // Answerer asked us to re-offer. Only the initiator may offer; share the recovery debounce.
-            // Require OUR side to actually need a rebuild so a hostile peer can't tear down a healthy link.
-            if (ShouldInitiateOffer(fromSocketId) && LocalLinkNeedsRebuild(peer) && TryBeginRecovery(fromSocketId))
+            // Rebuild when OUR side needs it OR the sender flagged its link wedged (signal.RebuildRequested) —
+            // the latter heals the split-brain where our channel reads 'open' but the remote's never opened.
+            // ShouldInitiateOffer (no glare) + TryBeginRecovery (per-peer backoff) bound it to one peer, no storm.
+            if (ShouldInitiateOffer(fromSocketId) && (LocalLinkNeedsRebuild(peer) || signal.RebuildRequested) && TryBeginRecovery(fromSocketId))
             {
                 RecreatePeerConnection(fromSocketId);
                 _ = StartOfferAsync(fromSocketId);
@@ -2102,8 +2110,10 @@ internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
                 var type = typeProp.GetString() ?? string.Empty;
                 if (type == "request-offer")
                 {
-                    // SDP-less control message: answerer asks the initiator to re-offer.
-                    signal = DecodedSignal.Control("request-offer");
+                    // SDP-less control message: answerer asks the initiator to re-offer. Optional 'rebuild' bool
+                    // (default false) signals the sender's link is wedged, so we rebuild even on an open channel.
+                    bool rebuild = root.TryGetProperty("rebuild", out var rb) && rb.ValueKind == JsonValueKind.True;
+                    signal = DecodedSignal.Control("request-offer") with { RebuildRequested = rebuild };
                     return true;
                 }
                 if (type != "offer" && type != "answer")
@@ -3544,6 +3554,11 @@ internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
         string? SdpMid,
         ushort SdpMLineIndex)
     {
+        // Set on a request-offer when the SENDER's link is genuinely wedged (channel non-open). Lets the open
+        // initiator honor the request and rebuild even when its own channel reads 'open' (the split-brain case),
+        // bounded by per-peer recovery backoff. Defaults false (backward-compatible with peers that omit it).
+        public bool RebuildRequested { get; init; }
+
         public static DecodedSignal Session(string kind, string sdp)
             => new(kind, sdp, null, null, 0);
 
