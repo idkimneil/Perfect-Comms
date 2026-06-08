@@ -1536,6 +1536,24 @@ internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
             if (IsLocalSocket(socketId)) return null;
             if (_peersBySocket.TryGetValue(socketId, out var existing)) return existing;
             var clientId = _socketToClient.TryGetValue(socketId, out var mappedClientId) ? mappedClientId : -1;
+            // A re-home (reconnect -> new socket, same clientId) can race MapClient's supersede: the new
+            // socket is already mapped while the prior socket's peer is still live, so both resolve to the
+            // same speaker and double-feed playback (loud, centered, non-directional). Evict any other live
+            // peer for this client BEFORE generating routes, so a shared-group RemoveInput can't strip the
+            // survivor's just-added inputs.
+            if (clientId >= 0)
+            {
+                List<string>? stalePeerSockets = null;
+                foreach (var kv in _peersBySocket)
+                    if (kv.Value.ClientId == clientId && !string.Equals(kv.Key, socketId, StringComparison.Ordinal))
+                        (stalePeerSockets ??= new()).Add(kv.Key);
+                if (stalePeerSockets != null)
+                    foreach (var stale in stalePeerSockets)
+                    {
+                        VoiceDiagnostics.Log("bcl.peer.superseded", $"oldSocket={stale} newSocket={socketId} client={clientId} reason=ensure-peer");
+                        RemovePeer(stale);
+                    }
+            }
             var playbackGroupId = clientId >= 0 ? clientId : _nextProvisionalPeerGroupId--;
             var leftRoute = _leftPlayback.Generate(playbackGroupId);
             var rightRoute = _rightPlayback.Generate(playbackGroupId);
