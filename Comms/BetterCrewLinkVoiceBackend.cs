@@ -1069,6 +1069,7 @@ internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
 
             result = VoiceRoleMuteState.ApplyLocalListenerAudioMuffle(result);
             peer.Apply(result); // proximity volumes only — volatile route writes, no _sync, no decode
+            LogCenteredLoudRoute(peer, target, listenerPos, result, snapshot.Phase);
             // Deliberately NOT calling peer.TryFlushBufferedVoice here. Doing so held the per-peer _sync lock
             // across the Concentus Opus decode ON THE UNITY MAIN/RENDER THREAD, so a packet arriving on the
             // WebRTC receive thread (or the tail-flush timer firing) could block rendering — a frame-stutter
@@ -3033,6 +3034,32 @@ internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
             && snapshot.TryGetPlayer(playerId, out var byPlayer)
             && byPlayer.ClientId == clientId) return byPlayer;
         return null;
+    }
+
+    private static readonly Dictionary<int, DateTime> _lastCenteredLoudLogUtc = new();
+
+    // Diagnostic for the "loud + both-sides-centered" report: logs resolved positions when an AUDIBLE peer lands at
+    // ~zero pan AND high volume, so a capture distinguishes genuine same-X co-location from a degenerate/stale target.
+    private static void LogCenteredLoudRoute(PeerConnection peer, VoicePlayerSnapshot? target, UnityEngine.Vector2? listenerPos, VoiceProximityResult result, VoiceGamePhase phase)
+    {
+        if (!VoiceDiagnostics.IsEnabled || !result.Audible) return;
+        if (Math.Abs(result.Pan) >= 0.06f) return;
+        if (result.NormalVolume + result.GhostVolume + result.RadioVolume < 0.5f) return;
+
+        var now = DateTime.UtcNow;
+        if (_lastCenteredLoudLogUtc.TryGetValue(peer.ClientId, out var last) && (now - last).TotalSeconds < 1.0) return;
+        _lastCenteredLoudLogUtc[peer.ClientId] = now;
+
+        var tpos = target?.Position ?? new UnityEngine.Vector2(float.NaN, float.NaN);
+        var lpos = listenerPos ?? new UnityEngine.Vector2(float.NaN, float.NaN);
+        float dx = tpos.x - lpos.x;
+        float dy = tpos.y - lpos.y;
+        float dist = (float)Math.Sqrt((double)dx * dx + (double)dy * dy);
+        VoiceDiagnostics.Log("bcl.route.centeredloud",
+            $"client={peer.ClientId} player={peer.PlayerId} name=\"{peer.PlayerName}\" phase={phase} reason={result.Reason} " +
+            $"pan={result.Pan:0.000} normal={result.NormalVolume:0.000} ghost={result.GhostVolume:0.000} radio={result.RadioVolume:0.000} " +
+            $"listenerPos=({lpos.x:0.00},{lpos.y:0.00}) targetPos=({tpos.x:0.00},{tpos.y:0.00}) dx={dx:0.00} dist={dist:0.00} " +
+            $"targetName=\"{(target?.PlayerName ?? "<none>")}\" targetPlayerId={(target.HasValue ? target.Value.PlayerId : (byte)255)} targetClientId={(target.HasValue ? target.Value.ClientId : -1)}");
     }
 
     private sealed class PeerConnection : IDisposable
