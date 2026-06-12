@@ -158,8 +158,22 @@ internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
     private string _captureDesiredReason = "init";
     private int _captureTransitionVersion;
     private static readonly TimeSpan SpeakerTopologyPollInterval = TimeSpan.FromSeconds(3);
-    private DateTime _speakerTopologyNextPollUtc = DateTime.MinValue;
+    private DateTime _speakerTopologyLastPollUtc = DateTime.MinValue;
     private string _speakerTopologySignature = string.Empty;
+    private static readonly TimeSpan SpeakerTopologyFastPollInterval = TimeSpan.FromSeconds(1);
+    private static readonly TimeSpan SpeakerTopologyFastWindow = TimeSpan.FromSeconds(12);
+    private static readonly TimeSpan SpeakerRetryInterval = TimeSpan.FromSeconds(5);
+    private static readonly TimeSpan PlaybackStoppedRestartInterval = TimeSpan.FromSeconds(1);
+    private static readonly TimeSpan BtMutedMicReleaseDelay = TimeSpan.FromSeconds(10);
+    private long _speakerTopologyFastUntilTicks;
+    private DateTime _lastSpeakerRetryUtc = DateTime.MinValue;
+    private DateTime _lastPlaybackStoppedRestartUtc = DateTime.MinValue;
+    private DateTime _muteSinceUtc = DateTime.MinValue;
+    private bool _speakerRequested;
+    private bool _btProfileConflict;
+    private bool _btMuteReleaseRequested;
+    private int _openedSpeakerDeviceNumber = int.MinValue;
+    private string _openedSpeakerProductName = string.Empty;
     private string _lastSpeakerDeviceName = string.Empty;
 #endif
 #if ANDROID
@@ -409,6 +423,8 @@ internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
         if (Mute == mute) return;
         Mute = mute;
 #if WINDOWS
+        _muteSinceUtc = mute ? DateTime.UtcNow : DateTime.MinValue;
+        _btMuteReleaseRequested = false;
         if (!mute && !_microphoneReady)
             QueueMicrophoneTransition(true, "unmuted");
 #elif ANDROID
@@ -471,9 +487,17 @@ internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
 
     public void SetMicrophone(string deviceName, float volume)
     {
-        _lastMicDeviceName = deviceName ?? string.Empty;
+        var normalizedName = deviceName ?? string.Empty;
+        var deviceChanged = !string.Equals(_lastMicDeviceName, normalizedName, StringComparison.Ordinal);
+        _lastMicDeviceName = normalizedName;
         _micVolume = Mathf.Clamp(volume, 0f, 2f);
 #if WINDOWS
+        if (deviceChanged)
+        {
+            _btProfileConflict = false;
+            lock (_captureFrameSync)
+                _micPreprocessor.ResetAutoGain();
+        }
         if (Mute)
         {
             QueueMicrophoneTransition(false, "set-muted");
@@ -603,6 +627,7 @@ internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
             }
 
             _microphoneReady = true;
+            Interlocked.Exchange(ref _speakerTopologyFastUntilTicks, (DateTime.UtcNow + SpeakerTopologyFastWindow).Ticks);
             VoiceDiagnostics.Log("bcl.mic", $"ready=true reason={reason} capture={captureKind} device=\"{_lastMicDeviceName}\" captureDevice=\"{captureDevice}\" captureFormat=\"{DescribeWaveFormat(_waveIn?.WaveFormat)}\" waveInDevice={waveInDevice} defaultWaveIn=\"{DescribeDefaultWaveInDevice()}\" waveInDevices=\"{DescribeWaveInDevices()}\" syntheticTone={_captureOptions.SyntheticMicToneEnabled} volume={_micVolume:0.00}");
         }
         catch (Exception ex)
@@ -625,6 +650,8 @@ internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
             try { waveIn.Dispose(); } catch { }
         }
         _microphoneReady = false;
+        if (hadMic)
+            Interlocked.Exchange(ref _speakerTopologyFastUntilTicks, (DateTime.UtcNow + SpeakerTopologyFastWindow).Ticks);
         // Reset the native RNNoise preprocessor INSIDE the capture lock: a WaveInEvent callback can still be
         // mid-flight in ProcessMicrophoneFrameLocked -> TryApplyNoiseSuppression (native ProcessFrame on the
         // same state pointer Reset destroys). Holding _captureFrameSync makes the two mutually exclusive and
@@ -633,7 +660,7 @@ internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
         {
             _captureEpoch++;
             _captureFrameSamples = 0;
-            _micPreprocessor.Reset();
+            _micPreprocessor.Reset(preserveAutoGain: true);
         }
         _localLevel = 0f;
         _localSpeaking = false;
@@ -823,7 +850,7 @@ internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
         {
             _captureEpoch++;
             _captureFrameSamples = 0;
-            _micPreprocessor.Reset();
+            _micPreprocessor.Reset(preserveAutoGain: true);
         }
         _localLevel = 0f;
         _localSpeaking = false;
@@ -874,11 +901,16 @@ internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
         try
         {
             _lastSpeakerDeviceName = deviceName ?? string.Empty;
+            _speakerRequested = true;
             _speakerTopologySignature = DescribeWaveOutDevices();
-            _speakerTopologyNextPollUtc = DateTime.UtcNow + SpeakerTopologyPollInterval;
-            _waveOut?.Stop();
-            _waveOut?.Dispose();
+            var previousWaveOut = _waveOut;
             _waveOut = null;
+            if (previousWaveOut != null)
+            {
+                try { previousWaveOut.PlaybackStopped -= OnPlaybackStopped; } catch { }
+                try { previousWaveOut.Stop(); } catch { }
+                try { previousWaveOut.Dispose(); } catch { }
+            }
             var outputDevice = ResolveWaveOutDevice(deviceName);
             _waveOut = new WaveOutEvent
             {
@@ -890,6 +922,8 @@ internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
             _waveOut.Init(_playbackProvider.ToWaveProvider());
             _waveOut.Play();
             _speakerReady = _waveOut.PlaybackState == PlaybackState.Playing;
+            _openedSpeakerDeviceNumber = outputDevice;
+            _openedSpeakerProductName = DescribeWaveOutDevice(outputDevice);
             VoiceDiagnostics.Log("bcl.speaker", $"ready={_speakerReady} device=\"{deviceName}\" outputDevice=\"{DescribeWaveOutDevice(outputDevice)}\" outputDeviceNumber={outputDevice} sourceFormat=\"left={_leftPlayback.Endpoint.WaveFormat};right={_rightPlayback.Endpoint.WaveFormat}\" graphFormat=\"{_playbackProvider.WaveFormat}\" outputDevices=\"{DescribeWaveOutDevices()}\" latencyMs={BclPlaybackLatencyMs} splitMonoGraphs=true");
         }
         catch (Exception ex)
@@ -898,6 +932,8 @@ internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
             try { _waveOut?.Dispose(); } catch { }
             _waveOut = null;
             _speakerReady = false;
+            _openedSpeakerDeviceNumber = int.MinValue;
+            _openedSpeakerProductName = string.Empty;
             VoiceDiagnostics.Log("bcl.speaker", $"ready=false device=\"{deviceName}\" error=\"{ex.Message}\"");
         }
 #else
@@ -923,43 +959,86 @@ internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
     }
 
 #if WINDOWS
-    // WinMM WaveOutEvent binds to the OS default output only at open time and never follows later default
-    // changes (CoreAudio/WASAPI notifications are intentionally absent from this build). When the user is on
-    // the "Default" speaker (empty device name) and the output-device topology changes — e.g. a headset is
-    // (un)plugged, which is also when Windows flips the default — reopen so audio follows. A pinned device is
-    // left untouched. This is the "I had to switch device to hear them" symptom on the speaker side.
+    // WinMM WaveOutEvent binds at open time and never re-resolves; the topology poll reopens it when the
+    // render-device list changes (default-device flips, USB (un)plug, Bluetooth A2DP<->HFP profile switches).
+    // Pinned devices follow too, guarded by a resolution diff so an unrelated list change never reopens them.
     private void OnPlaybackStopped(object? sender, StoppedEventArgs e)
     {
-        if (_disposed || e.Exception == null) return;
+        if (_disposed) return;
         if (!ReferenceEquals(sender, _waveOut)) return;
         _speakerReady = false;
+        if (e.Exception == null)
+        {
+            VoiceDiagnostics.Log("bcl.speaker", "ready=false reason=playback-stopped-clean");
+            return;
+        }
         VoiceDiagnostics.Log("bcl.speaker", $"ready=false reason=playback-stopped error=\"{e.Exception.Message}\"");
-        try
+        var now = DateTime.UtcNow;
+        if (now - _lastPlaybackStoppedRestartUtc < PlaybackStoppedRestartInterval) return;
+        _lastPlaybackStoppedRestartUtc = now;
+        _mainThreadActions.Enqueue(() =>
         {
+            if (_disposed) return;
             SetSpeaker(_lastSpeakerDeviceName);
-        }
-        catch (Exception ex)
-        {
-            VoiceDiagnostics.Log("bcl.speaker", $"ready=false reason=restart-failed error=\"{ex.Message}\"");
-        }
+        });
     }
 
     private void MaybeFollowDefaultSpeaker()
     {
-        if (_disposed || !_speakerReady) return;
-        if (!string.IsNullOrWhiteSpace(_lastSpeakerDeviceName)) return;
+        if (_disposed || !_speakerRequested) return;
 
         var now = DateTime.UtcNow;
-        if (now < _speakerTopologyNextPollUtc) return;
-        _speakerTopologyNextPollUtc = now + SpeakerTopologyPollInterval;
+        bool fastWindow = now.Ticks < Interlocked.Read(ref _speakerTopologyFastUntilTicks);
+        var interval = fastWindow ? SpeakerTopologyFastPollInterval : SpeakerTopologyPollInterval;
+        if (now - _speakerTopologyLastPollUtc < interval) return;
+        _speakerTopologyLastPollUtc = now;
 
         string signature;
         try { signature = DescribeWaveOutDevices(); }
         catch { return; }
-        if (signature == _speakerTopologySignature) return;
 
-        VoiceDiagnostics.Log("bcl.speaker", $"ready={_speakerReady} reason=default-follow oldDevices=\"{_speakerTopologySignature}\" newDevices=\"{signature}\"");
-        SetSpeaker(_lastSpeakerDeviceName); // re-resolves WAVE_MAPPER against the new default; refreshes signature
+        if (signature == _speakerTopologySignature)
+        {
+            if (_speakerReady) return;
+            if (now - _lastSpeakerRetryUtc < SpeakerRetryInterval) return;
+            _lastSpeakerRetryUtc = now;
+            VoiceDiagnostics.Log("bcl.speaker", $"ready=false reason=retry devices=\"{signature}\"");
+            SetSpeaker(_lastSpeakerDeviceName);
+            return;
+        }
+
+        bool pinned = !string.IsNullOrWhiteSpace(_lastSpeakerDeviceName);
+        if (pinned && _speakerReady)
+        {
+            var resolved = ResolveWaveOutDevice(_lastSpeakerDeviceName);
+            if (resolved == _openedSpeakerDeviceNumber
+                && string.Equals(DescribeWaveOutDevice(resolved), _openedSpeakerProductName, StringComparison.Ordinal))
+            {
+                _speakerTopologySignature = signature;
+                return;
+            }
+        }
+
+        bool openedEndpointVanished = _openedSpeakerProductName.Length > 0
+            && _speakerTopologySignature.Contains(_openedSpeakerProductName, StringComparison.Ordinal)
+            && !signature.Contains(_openedSpeakerProductName, StringComparison.Ordinal);
+        if (fastWindow && openedEndpointVanished && !_btProfileConflict)
+        {
+            _btProfileConflict = true;
+            VoiceDiagnostics.Log("bcl.speaker.profile-conflict",
+                $"mic=\"{_lastMicDeviceName}\" speaker=\"{_lastSpeakerDeviceName}\" oldDevices=\"{_speakerTopologySignature}\" newDevices=\"{signature}\"");
+        }
+        VoiceDiagnostics.Log("bcl.speaker", $"ready={_speakerReady} reason={(pinned ? "pinned-follow" : "default-follow")} oldDevices=\"{_speakerTopologySignature}\" newDevices=\"{signature}\"");
+        SetSpeaker(_lastSpeakerDeviceName); // re-resolves against the new device list; refreshes signature
+    }
+
+    private void MaybeReleaseBluetoothMutedMicrophone()
+    {
+        if (!Mute || !_microphoneReady || !_btProfileConflict || _btMuteReleaseRequested) return;
+        if (_muteSinceUtc == DateTime.MinValue || DateTime.UtcNow - _muteSinceUtc < BtMutedMicReleaseDelay) return;
+        _btMuteReleaseRequested = true;
+        VoiceDiagnostics.Log("bcl.mic", $"reason=muted-bt-release device=\"{_lastMicDeviceName}\"");
+        QueueMicrophoneTransition(false, "muted-bt-release");
     }
 #endif
 
@@ -1079,6 +1158,9 @@ internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
 
 #if ANDROID
         _androidMicrophone?.Tick();
+#elif WINDOWS
+        MaybeReleaseBluetoothMutedMicrophone();
+        MaybeFollowDefaultSpeaker();
 #endif
 
         if (snapshot == null)
@@ -1149,9 +1231,6 @@ internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
         }
         VoiceFrameProfiler.End("room.backend.proximity", proxTicks);
 
-#if WINDOWS
-        MaybeFollowDefaultSpeaker();
-#endif
         MaybeLogStats(snapshot, "ok");
     }
 

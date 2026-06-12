@@ -62,15 +62,21 @@ internal sealed class MicPreprocessor : IDisposable
     private double _noiseSuppressionOutputSquareSumSinceStats;
     private float _noiseSuppressionSpeechProbabilityMaxSinceStats;
 
-    public void Reset()
+    public void Reset(bool preserveAutoGain = false)
     {
         _hangoverFramesRemaining = 0;
-        _agcGain = 1f;
-        _agcLastAppliedGain = 1f;
-        _agcRecentSpeechPeak = 0f;
+        if (!preserveAutoGain)
+            ResetAutoGain();
         _hpfLastInput = 0f;
         _hpfLastOutput = 0f;
         _noiseSuppressor?.Reset();
+    }
+
+    public void ResetAutoGain()
+    {
+        _agcGain = 1f;
+        _agcLastAppliedGain = 1f;
+        _agcRecentSpeechPeak = 0f;
     }
 
     public void ApplyHighPass(float[] pcm, int sampleCount)
