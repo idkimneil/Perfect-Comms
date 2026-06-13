@@ -462,6 +462,14 @@ internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
     {
         if (Mute == mute) return;
         Mute = mute;
+        if (mute)
+        {
+            // Clear latched local-speaking state. A push-to-talk release mutes mid-utterance but keeps the
+            // Windows mic running, so the capture loop that decays _localLevel never runs to clear it, which
+            // otherwise leaves the local speaking indicator stuck on until the user resets.
+            _localLevel = 0f;
+            _localSpeaking = false;
+        }
 #if WINDOWS
         _muteSinceUtc = mute ? DateTime.UtcNow : DateTime.MinValue;
         _btMuteReleaseRequested = false;
