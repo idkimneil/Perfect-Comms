@@ -244,6 +244,20 @@ internal class BufferedSampleProvider : ISampleProvider
         }
     }
 
+    public void DiscardBufferedSamples(int count)
+    {
+        if (count <= 0) return;
+        lock (_stateLock)
+        {
+            if (_ring == null || _ring.Count == 0) return;
+            int discard = Math.Min(count, _ring.Count);
+            _ring.Discard(discard);
+            _resumeFadeRemaining = DiscontinuityFadeSamples;
+            System.Threading.Interlocked.Increment(ref _resumeFades);
+            System.Threading.Interlocked.Add(ref _discardedSamples, discard);
+        }
+    }
+
     private void ClearLocked()
     {
         _ring?.Reset();
@@ -378,9 +392,9 @@ internal class BufferedSampleProvider : ISampleProvider
         {
             System.Threading.Interlocked.Increment(ref _underruns);
             // Trailing-stall concealment bridge (Fix 2b-3): on a recent-activity underrun (mid-utterance, not
-            // end-of-talk), write up to MaxTrailingPlcFrames of the per-peer bridge frame into the ring to
-            // span the gap while the deeper cushion (2a) refills. Trim-bounded so it never fights the
-            // cut-to-size, only emitted while there is ring headroom; then re-read to satisfy this request.
+            // end-of-talk), fill the unsatisfied tail of THIS read with up to MaxTrailingPlcFrames of the
+            // per-peer bridge frame. Written straight to the output, never into the ring, so the L/R twin rings
+            // keep an identical buffered depth (a one-sided ring write skews the stereo image non-directional).
             bool recentlyActive = _lastWriteUtc != DateTime.MinValue &&
                                   (DateTime.UtcNow - _lastWriteUtc) < IdleRecoveryResetWindow;
             if (EnableRecoveryPrebuffer && recentlyActive
@@ -399,19 +413,18 @@ internal class BufferedSampleProvider : ISampleProvider
                     float gain = 1f - (float)_trailingPlcEmitted / MaxTrailingPlcFrames;
                     for (int s = 0; s < AudioHelpers.FrameSize; s++)
                         _plcTaperScratch[s] = plc[s] * gain;
-                    _ring.Write(_plcTaperScratch, 0, AudioHelpers.FrameSize);
+                    int fill = Math.Min(count - num, AudioHelpers.FrameSize);
+                    Array.Copy(_plcTaperScratch, 0, buffer, offset + num, fill);
                     _trailingPlcEmitted++;
-                    // Drain the just-written bridge frame into the unfilled tail so this read is real audio.
-                    int extra = _ring.Read(buffer, offset + num, count - num);
-                    System.Threading.Interlocked.Add(ref _actualReadSamples, extra);
-                    num += extra;
+                    System.Threading.Interlocked.Add(ref _actualReadSamples, fill);
+                    num += fill;
                 }
             }
             if (EnableRecoveryPrebuffer && _prebufferSamples > 0)
             {
-                // Grow the cushion on any starvation; a genuine end-of-talk idle is undone separately by the
-                // idle-reset at the top of ReadLocked once the talker has been silent past the idle window.
-                IncreaseRecoveryPrebufferLocked();
+                // Only a mid-utterance stall deepens the cushion; a benign end-of-talk drain must not escalate.
+                if (recentlyActive)
+                    IncreaseRecoveryPrebufferLocked();
                 _isPrebuffering = true;
                 _prebufferFirstSampleUtc = (_ring?.Count ?? 0) > 0 ? DateTime.UtcNow : DateTime.MinValue;
                 ResetPrebufferLogStateLocked();
@@ -1028,6 +1041,7 @@ public class AudioRoutingInstance : IHasAudioPropertyNode
 
     public void ClearBufferedSamples() => _source.Clear();
     public void FadeClearBufferedSamples() => _source.RequestFadeClear();
+    public void DiscardBufferedSamples(int count) => _source.DiscardBufferedSamples(count);
 
     // Per-peer adaptive jitter-buffer wiring (Fix 2a-3 / 2b-3): the owning PeerConnection supplies the clean
     // arrival-jitter signal and a PLC bridge frame so the ring deepens/conceals per peer.

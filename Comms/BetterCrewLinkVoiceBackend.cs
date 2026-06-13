@@ -3861,18 +3861,10 @@ internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
                 _lastLoggedJitterTarget = targetFrames;
             }
 
-            if (VoiceDiagnostics.IsEnabled && ++_lrDivergenceCheckCounter >= 30)
+            if (++_lrDivergenceCheckCounter >= 30)
             {
                 _lrDivergenceCheckCounter = 0;
-                int leftBuffered = _leftRoute.BufferedSamples;
-                int rightBuffered = _rightRoute.BufferedSamples;
-                if (Math.Abs(leftBuffered - rightBuffered) >= AudioHelpers.FrameSize
-                    && DateTime.UtcNow - _lastLrDivergenceLogUtc >= LrDivergenceLogInterval)
-                {
-                    _lastLrDivergenceLogUtc = DateTime.UtcNow;
-                    VoiceDiagnostics.Log("bcl.lr.divergence",
-                        $"client={ClientId} left={leftBuffered} right={rightBuffered}");
-                }
+                RealignRoutes();
             }
         }
 
@@ -3880,6 +3872,30 @@ internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
         private int _lrDivergenceCheckCounter;
         private DateTime _lastLrDivergenceLogUtc = DateTime.MinValue;
         private static readonly TimeSpan LrDivergenceLogInterval = TimeSpan.FromSeconds(5);
+
+        // The left/right per-peer rings carry the SAME mono signal and must stay frame-aligned, or a >=1-frame
+        // skew decorrelates the stereo image (audio stops being directional). The per-ring trailing-PLC bridge and
+        // idle-reset can add/drop a frame on one side only, so trim the longer ring back to its twin under the
+        // interleave lock to re-lock playout. Runs in production, not just when diagnostics are enabled.
+        private void RealignRoutes()
+        {
+            int leftBuffered, rightBuffered, delta;
+            lock (_lrSync)
+            {
+                leftBuffered = _leftRoute.BufferedSamples;
+                rightBuffered = _rightRoute.BufferedSamples;
+                delta = leftBuffered - rightBuffered;
+                if (Math.Abs(delta) < AudioHelpers.FrameSize) return;
+                if (delta > 0) _leftRoute.DiscardBufferedSamples(delta);
+                else _rightRoute.DiscardBufferedSamples(-delta);
+            }
+            if (VoiceDiagnostics.IsEnabled && DateTime.UtcNow - _lastLrDivergenceLogUtc >= LrDivergenceLogInterval)
+            {
+                _lastLrDivergenceLogUtc = DateTime.UtcNow;
+                VoiceDiagnostics.Log("bcl.lr.divergence",
+                    $"client={ClientId} left={leftBuffered} right={rightBuffered} realigned={Math.Abs(delta)}");
+            }
+        }
         public PeerDiagnostics ConsumeDiagnostics()
         {
             lock (_sync)
