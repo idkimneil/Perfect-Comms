@@ -1,6 +1,7 @@
 using System;
 using System.IO;
 using System.Reflection;
+using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using BepInEx;
 
@@ -199,11 +200,7 @@ internal sealed unsafe class RnNoiseSuppressor : IDisposable
 
     private static string ExtractNativeLibrary()
     {
-        var root = Paths.BepInExRootPath;
-        if (string.IsNullOrWhiteSpace(root))
-            root = AppContext.BaseDirectory;
-
-        var dir = Path.Combine(root, "cache", "PerfectComms", "native", ArchitectureLabel);
+        var dir = Path.Combine(ResolveBaseDirectory(), "cache", "PerfectComms", "native", ArchitectureLabel);
         Directory.CreateDirectory(dir);
         var target = Path.Combine(dir, NativeFileName);
 
@@ -233,6 +230,26 @@ internal sealed unsafe class RnNoiseSuppressor : IDisposable
 
         return target;
     }
+
+    // Degrade to the app base directory when BepInEx.Core is absent (headless / unit tests). The Paths access
+    // lives in a separate non-inlined method so its JIT-time assembly-load failure surfaces at the call site
+    // here and is caught, instead of faulting this method before the try block runs.
+    private static string ResolveBaseDirectory()
+    {
+        try
+        {
+            var root = ProbeBepInExRoot();
+            if (!string.IsNullOrWhiteSpace(root)) return root;
+        }
+        catch
+        {
+        }
+
+        return AppContext.BaseDirectory;
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static string? ProbeBepInExRoot() => Paths.BepInExRootPath;
 
     private sealed record NativeApi(
         RnNoiseGetFrameSize GetFrameSize,
