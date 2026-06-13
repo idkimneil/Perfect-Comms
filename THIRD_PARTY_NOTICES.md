@@ -17,7 +17,21 @@ runtime. Their licenses are reproduced or referenced below.
 - Upstream: https://github.com/xiph/rnnoise
 - License: BSD 3-Clause (Xiph.org Foundation / Gregor Richards / Mozilla). Full text in `Libs/rnnoise.COPYING`.
 
-## Other bundled managed dependencies
+## Bundled managed dependencies
 
-NAudio, Concentus, SIPSorcery, SocketIOClient, and related packages are redistributed under their respective
-MIT/BSD licenses; see each package's repository for the full license text.
+The plugin embeds these managed assemblies as resources and resolves them at runtime. Each is redistributed
+under its own open-source license; consult the upstream project for the full text. SPDX is listed where it is
+unambiguous, otherwise see upstream.
+
+| Assembly | License |
+|----------|---------|
+| NAudio.Core, NAudio.WinMM | MIT |
+| Concentus (Opus codec) | see upstream (xiph/Opus-derived) |
+| SIPSorcery, SIPSorceryMedia.Abstractions | see upstream |
+| websocket-sharp | MIT |
+| SocketIOClient, SocketIO.Core, SocketIO.Serializer.* | MIT |
+| BouncyCastle.Cryptography | MIT |
+| DnsClient | Apache-2.0 |
+| Microsoft.Extensions.DependencyInjection.Abstractions, Microsoft.Extensions.Logging.Abstractions | MIT (.NET Foundation) |
+| System.Diagnostics.DiagnosticSource, System.Text.Encodings.Web, System.Text.Json | MIT (.NET Foundation) |
+| Interstellar, Interstellar.Messages | third-party voice backend; see its distribution for license terms |
