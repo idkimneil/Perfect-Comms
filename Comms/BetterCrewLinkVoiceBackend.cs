@@ -19,6 +19,8 @@ namespace VoiceChatPlugin.VoiceChat;
 internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
 {
     private const int DataControlPrefixLength = 4;
+    // Hard ceiling on an untrusted inbound datagram (largest legit message is a ~4 KB voice packet).
+    private const int MaxIncomingDatagramBytes = 16 * 1024;
     private static readonly int BclOpusBitrate = 48_000;
     private static readonly bool BclOpusUseConstrainedVbr = true;
     private static readonly bool BclOpusUseInbandFec = true;   // arm LossResistant flag (sender) + the jitter-buffer Fec drain arm
@@ -1880,37 +1882,52 @@ internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
         }
     }
 
+    // Evict any other live peer mapped to the same client as socketId. A re-home (reconnect -> new socket,
+    // same clientId) can leave the prior socket's peer live while the new socket is already mapped, so both
+    // resolve to the same speaker and double-feed playback (loud, centered, non-directional). Caller MUST
+    // hold _peerSync; must run BEFORE route generation so a shared-group RemoveInput can't strip the
+    // survivor's just-added inputs.
+    private void EvictSameClientPeersLocked(string socketId)
+    {
+        var clientId = _socketToClient.TryGetValue(socketId, out var mappedClientId) ? mappedClientId : -1;
+        if (clientId < 0) return;
+        List<string>? stalePeerSockets = null;
+        foreach (var kv in _peersBySocket)
+            if (kv.Value.ClientId == clientId && !string.Equals(kv.Key, socketId, StringComparison.Ordinal))
+                (stalePeerSockets ??= new()).Add(kv.Key);
+        if (stalePeerSockets == null) return;
+        foreach (var stale in stalePeerSockets)
+        {
+            VoiceDiagnostics.Log("bcl.peer.superseded", $"oldSocket={stale} newSocket={socketId} client={clientId} reason=ensure-peer");
+            RemovePeer(stale);
+        }
+    }
+
     private PeerConnection? EnsurePeer(string socketId)
     {
+        if (IsLocalSocket(socketId)) return null;
         lock (_peerSync)
         {
-            if (IsLocalSocket(socketId)) return null;
-            if (_peersBySocket.TryGetValue(socketId, out var existing)) return existing;
+            // Fast path: re-offers for a known peer return without renting (renting must happen off-lock).
+            if (_peersBySocket.TryGetValue(socketId, out var known)) return known;
+            // Evict same-client duplicates up front, independent of the rent below, so a re-home race can't
+            // leave a stale peer double-feeding playback. Must precede route generation.
+            EvictSameClientPeersLocked(socketId);
+        }
+
+        // Rent OUTSIDE _peerSync: a cold-miss DTLS build under the lock freezes the audio send path.
+        var pc = RentPeerConnection();
+        lock (_peerSync)
+        {
+            if (IsLocalSocket(socketId)) { CloseRented(pc); return null; }
+            if (_peersBySocket.TryGetValue(socketId, out var existing)) { CloseRented(pc); return existing; }
             var clientId = _socketToClient.TryGetValue(socketId, out var mappedClientId) ? mappedClientId : -1;
-            // A re-home (reconnect -> new socket, same clientId) can race MapClient's supersede: the new
-            // socket is already mapped while the prior socket's peer is still live, so both resolve to the
-            // same speaker and double-feed playback (loud, centered, non-directional). Evict any other live
-            // peer for this client BEFORE generating routes, so a shared-group RemoveInput can't strip the
-            // survivor's just-added inputs.
-            if (clientId >= 0)
-            {
-                List<string>? stalePeerSockets = null;
-                foreach (var kv in _peersBySocket)
-                    if (kv.Value.ClientId == clientId && !string.Equals(kv.Key, socketId, StringComparison.Ordinal))
-                        (stalePeerSockets ??= new()).Add(kv.Key);
-                if (stalePeerSockets != null)
-                    foreach (var stale in stalePeerSockets)
-                    {
-                        VoiceDiagnostics.Log("bcl.peer.superseded", $"oldSocket={stale} newSocket={socketId} client={clientId} reason=ensure-peer");
-                        RemovePeer(stale);
-                    }
-            }
             var playbackGroupId = clientId >= 0 ? clientId : _nextProvisionalPeerGroupId--;
             var leftRoute = _leftPlayback.Generate(playbackGroupId);
             var rightRoute = _rightPlayback.Generate(playbackGroupId);
             var peer = new PeerConnection(socketId, clientId, playbackGroupId, leftRoute, rightRoute);
             peer.SetInterleaveSync(_playbackProvider.InterleaveSync);
-            WireNewPeerConnection(peer, socketId);
+            WireNewPeerConnection(peer, socketId, pc);
             _peersBySocket[socketId] = peer;
             VoiceDiagnostics.Log("bcl.peer.created", $"socket={socketId} client={clientId} playbackGroup={playbackGroupId} provisional={(clientId < 0).ToString().ToLowerInvariant()}");
             VoiceDiagnostics.Log("bcl.peer-connected", $"socket={socketId} client={clientId}");
@@ -2087,6 +2104,12 @@ internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
         });
     }
 
+    // Close a connection that was rented but never wired onto a live peer (lost a create/recreate race).
+    private static void CloseRented(RTCPeerConnection pc)
+    {
+        try { pc.close(); } catch { }
+    }
+
     // Close and discard every pooled (never-wired) connection — used when the ICE config changes (the pooled
     // connections carry stale config) and on dispose.
     private void DrainPeerConnectionPool()
@@ -2106,11 +2129,10 @@ internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
         RefillPeerConnectionPool();
     }
 
-    // Fresh RTCPeerConnection + handlers, shared by EnsurePeer and RecreatePeerConnection.
-    // Caller MUST hold _peerSync.
-    private void WireNewPeerConnection(PeerConnection peer, string socketId)
+    // Wires handlers onto a pre-rented RTCPeerConnection. Caller MUST hold _peerSync and MUST have rented
+    // 'pc' OUTSIDE the lock (a cold-miss DTLS build under _peerSync freezes the audio send path).
+    private void WireNewPeerConnection(PeerConnection peer, string socketId, RTCPeerConnection pc)
     {
-        var pc = RentPeerConnection();
         // The rented connection is reachable for teardown only once it is stored on a peer that is in
         // _peersBySocket. If anything below throws before wiring completes, close it here so a still-open
         // DTLS connection can't be orphaned (nothing else would ever close it).
@@ -2215,16 +2237,19 @@ internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
     // so one failed handshake rebuilds without a global Rejoin that re-rolls every other peer.
     private void RecreatePeerConnection(string socketId)
     {
+        if (IsLocalSocket(socketId)) return;
+        // Rent OUTSIDE _peerSync: a cold-miss DTLS build under the lock freezes the audio send path
+        // (which also locks _peerSync) — the storm-time stall behind the jitter-buffer underruns.
+        var pc = RentPeerConnection();
         lock (_peerSync)
         {
-            if (IsLocalSocket(socketId)) return;
-            if (!_peersBySocket.TryGetValue(socketId, out var peer)) return;
+            if (!_peersBySocket.TryGetValue(socketId, out var peer)) { CloseRented(pc); return; }
             try { peer.DataChannel?.close(); } catch { }
             try { peer.Connection?.close(); } catch { }
             peer.DataChannel = null;
             peer.OfferStartedUtc = DateTime.MinValue;
             peer.LastConnectionRebuildUtc = DateTime.UtcNow;
-            WireNewPeerConnection(peer, socketId);
+            WireNewPeerConnection(peer, socketId, pc);
         }
         VoiceDiagnostics.Log("bcl.peer.recreated", $"socket={socketId}");
     }
@@ -2638,6 +2663,7 @@ internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
 
     private void OnDataChannelMessage(PeerConnection peer, byte[] data)
     {
+        if (data.Length > MaxIncomingDatagramBytes) return;
         if (HasDataControlPrefix(data))
         {
             var payload = new byte[data.Length - DataControlPrefixLength];

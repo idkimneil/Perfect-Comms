@@ -86,6 +86,9 @@ internal readonly struct BclVoicePacket
         if (packet.Length <= HeaderBytes || !HasMagic(packet)) return false;
         if (packet[2] != Version || packet[3] != CodecOpus) return false;
 
+        // Reject an over-large untrusted payload before allocating/decoding it (single enforced BCL cap).
+        if (packet.Length - HeaderBytes > VoiceProtocol.MaxEncodedAudioBytes) return false;
+
         var flags = (BclVoicePacketFlags)packet[12];
         if ((flags & ~AllowedFlags) != 0) return false;
 
