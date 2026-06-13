@@ -1,5 +1,20 @@
 # Changelog
 
+## Unreleased
+
+Perfect Comms is now fully standalone: it no longer depends on Reactor or MiraAPI.
+
+### What's Changed
+
+- **No more Reactor or MiraAPI dependency.**
+  > <sub>Perfect Comms runs on vanilla Among Us plus BepInEx alone. It still shares a `BepInEx/plugins` folder with mods that use Reactor or MiraAPI (such as TOU-Mira) without conflict, and TOU-Mira voice integrations still activate automatically when those mods are present.</sub>
+
+- **Rebuilt in-game settings UI.**
+  > <sub>Client settings open from the Among Us Options menu (or press F10). Host voice settings open from the lobby game-settings console (or press F11). This replaces the previous MiraAPI settings tab.</sub>
+
+- **Full keyboard and mouse keybinds.**
+  > <sub>Every voice keybind can be rebound to any keyboard key or mouse button, including MB4 and MB5. Existing keybinds reset to their defaults once because of the new binding system.</sub>
+
 ## Perfect Comms v2.1.7
 
 This Perfect Comms release is a big audio-quality pass: smoother voice with no clicks or pops, lower delay that adapts to each player's connection, fixed Bluetooth headsets going silent, better quiet-mic handling, and a Jailor unmute that always sticks.

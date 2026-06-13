@@ -4,7 +4,6 @@ using UnityEngine;
 using UnityEngine.Rendering;
 using System;
 using System.Collections.Generic;
-using MiraAPI.LocalSettings;
 
 namespace VoiceChatPlugin;
 
@@ -92,7 +91,7 @@ public static class MeetingSpeakingIndicatorPatch
     private static void UpdateIndicators(VoiceOverlayState overlay, MeetingHud meetingHud)
     {
         _updateCalls++;
-        var settings = LocalSettingsTabSingleton<VoiceChatLocalSettings>.Instance;
+        var settings = VoiceSettings.Instance;
         bool debugHud = settings?.DebugVoiceStats.Value == true;
         bool logNow = debugHud && ShouldLog(ref _lastUpdateLogUtc);
         if (settings != null && !settings.MeetingSpeakingOverlay.Value)
@@ -428,7 +427,7 @@ public static class MeetingSpeakingIndicatorPatch
     }
 
     private static bool ShouldDebugLogHud()
-        => LocalSettingsTabSingleton<VoiceChatLocalSettings>.Instance?.DebugVoiceStats.Value == true;
+        => VoiceSettings.Instance?.DebugVoiceStats.Value == true;
 
     private static string DescribeHudRoot(MeetingHud meetingHud)
         => $"scene={CurrentSceneName()} hudActive={meetingHud.gameObject.activeInHierarchy} " +

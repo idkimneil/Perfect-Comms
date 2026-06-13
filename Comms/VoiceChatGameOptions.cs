@@ -1,77 +1,98 @@
-using MiraAPI.GameOptions;
-using MiraAPI.GameOptions.OptionTypes;
-using MiraAPI.Utilities;
+using BepInEx.Configuration;
 
 namespace VoiceChatPlugin.VoiceChat;
 
-public class VoiceChatGameOptions : AbstractOptionGroup
+public class VoiceChatGameOptions
 {
-    public override string GroupName => "Perfect Comms";
-    public override uint GroupPriority => 1000;
+    public const string GroupName = "Perfect Comms";
+    public const uint GroupPriority = 1000;
+    private const string Section = "Host.VoiceChat";
 
-    public ModdedToggleOption PublicVoiceLobby { get; } = new("Public Voice Lobby", false);
+    public ToggleHolder PublicVoiceLobby { get; }
+    public EnumHolder VoiceBackend { get; }
+    public EnumHolder LobbyBrowserBackend { get; }
+    public NumberHolder MaxChatDistance { get; }
+    public EnumHolder FalloffMode { get; }
+    public EnumHolder OcclusionMode { get; }
+    public ToggleHolder WallsBlockSound { get; }
+    public ToggleHolder OnlyHearInSight { get; }
+    public ToggleHolder ImpostorHearGhosts { get; }
+    public ToggleHolder HearInVent { get; }
+    public ToggleHolder VentPrivateChat { get; }
+    public ToggleHolder CommsSabDisables { get; }
+    public ToggleHolder CameraCanHear { get; }
+    public ToggleHolder TeamRadio { get; }
+    public ToggleHolder TeamRadioImpostors { get; }
+    public ToggleHolder TeamRadioVampires { get; }
+    public ToggleHolder TeamRadioLovers { get; }
+    public ToggleHolder TeamRadioInMeetings { get; }
+    public ToggleHolder TeamRadioInTasks { get; }
+    public ToggleHolder OnlyGhostsCanTalk { get; }
+    public ToggleHolder GhostsHearEachOtherUnlimited { get; }
+    public ToggleHolder OnlyMeetingOrLobby { get; }
+    public ToggleHolder OnlyMeetingOrLobbyAffectsGhosts { get; }
 
-    public ModdedEnumOption VoiceBackend { get; } = new("Voice Backend", (int)VoiceTransportBackend.BetterCrewLink,
-        typeof(VoiceTransportBackend), ["BetterCrewLink", "Interstellar"]);
-
-    public ModdedEnumOption LobbyBrowserBackend { get; } = new("Lobby Browser Backend", (int)VoiceLobbyBrowserSource.BetterCrewLink,
-        typeof(VoiceLobbyBrowserSource), ["BCL Live", "Cloudflare (Limited)"]);
-
-    public ModdedNumberOption MaxChatDistance { get; } =
-        new("Max Distance", 6f, 1.5f, 20f, 0.5f, MiraNumberSuffixes.None, "0.0");
-
-    public ModdedEnumOption FalloffMode { get; } = new("Voice Falloff", (int)VoiceFalloffMode.Smooth,
-        typeof(VoiceFalloffMode), ["Linear", "Smooth", "Voice Focused"]);
-
-    public ModdedEnumOption OcclusionMode { get; } = new("Voice Occlusion", (int)VoiceOcclusionMode.VisionOnly,
-        typeof(VoiceOcclusionMode), ["Off", "Soft Muffle", "Soft Fade", "Hard Block", "Vision Only"]);
-
-    public ModdedToggleOption WallsBlockSound     { get; } = new("Walls Block Audio",              true);
-    public ModdedToggleOption OnlyHearInSight      { get; } = new("Hear People in Vision Only",     true);
-    public ModdedToggleOption ImpostorHearGhosts   { get; } = new("Impostors Hear Dead",            false);
-    public ModdedToggleOption HearInVent           { get; } = new("Hear Impostors in Vents",        false);
-    public ModdedToggleOption VentPrivateChat      { get; } = new("Private Talk in Vents",          true);
-    public ModdedToggleOption CommsSabDisables     { get; } = new("Comms Sabotage Disables Voice",  true);
-    public ModdedToggleOption CameraCanHear        { get; } = new("Hear Through Cameras",           true);
-    public ModdedToggleOption TeamRadio            { get; } = new("Team Radio",                     true);
-    public ModdedToggleOption TeamRadioImpostors   { get; } = new("Team Radio - Impostors",         true)
+    private VoiceChatGameOptions(ConfigFile cfg)
     {
-        Visible = TeamRadioSubOptionsVisible
-    };
-    public ModdedToggleOption TeamRadioVampires    { get; } = new("Team Radio - Vampires",          true)
-    {
-        Visible = TeamRadioSubOptionsVisible
-    };
-    public ModdedToggleOption TeamRadioLovers      { get; } = new("Team Radio - Lovers",            true)
-    {
-        Visible = TeamRadioSubOptionsVisible
-    };
-    public ModdedToggleOption TeamRadioInMeetings  { get; } = new("Team Radio - Usable in Meetings", false)
-    {
-        Visible = TeamRadioSubOptionsVisible
-    };
-    public ModdedToggleOption TeamRadioInTasks     { get; } = new("Team Radio - Usable in Tasks Phase", true)
-    {
-        Visible = TeamRadioInMeetingsVisible
-    };
-    public ModdedToggleOption OnlyGhostsCanTalk    { get; } = new("Only Ghosts can Talk/Hear",      false);
-    public ModdedToggleOption GhostsHearEachOtherUnlimited { get; } = new("Ghosts Hear Each Other Anywhere", false);
-    public ModdedToggleOption OnlyMeetingOrLobby   { get; } = new("Meetings/Lobby Only",            false);
-    public ModdedToggleOption OnlyMeetingOrLobbyAffectsGhosts { get; } = new("Ghosts Also Meeting/Lobby Only", false)
-    {
-        Visible = MeetingLobbySubOptionsVisible
-    };
+        PublicVoiceLobby = new ToggleHolder(cfg, Section, "PublicVoiceLobby", "Public Voice Lobby", false);
+        VoiceBackend = new EnumHolder(cfg, Section, "VoiceBackend", "Voice Backend",
+            (int)VoiceTransportBackend.BetterCrewLink, typeof(VoiceTransportBackend),
+            new[] { "BetterCrewLink", "Interstellar" });
+        LobbyBrowserBackend = new EnumHolder(cfg, Section, "LobbyBrowserBackend", "Lobby Browser Backend",
+            (int)VoiceLobbyBrowserSource.BetterCrewLink, typeof(VoiceLobbyBrowserSource),
+            new[] { "BCL Live", "Cloudflare (Limited)" });
+        MaxChatDistance = new NumberHolder(cfg, Section, "MaxChatDistance", "Max Distance", 6f, 1.5f, 20f, 0.5f, "0.0");
+        FalloffMode = new EnumHolder(cfg, Section, "FalloffMode", "Voice Falloff",
+            (int)VoiceFalloffMode.Smooth, typeof(VoiceFalloffMode),
+            new[] { "Linear", "Smooth", "Voice Focused" });
+        OcclusionMode = new EnumHolder(cfg, Section, "OcclusionMode", "Voice Occlusion",
+            (int)VoiceOcclusionMode.VisionOnly, typeof(VoiceOcclusionMode),
+            new[] { "Off", "Soft Muffle", "Soft Fade", "Hard Block", "Vision Only" });
+        WallsBlockSound = new ToggleHolder(cfg, Section, "WallsBlockSound", "Walls Block Audio", true);
+        OnlyHearInSight = new ToggleHolder(cfg, Section, "OnlyHearInSight", "Hear People in Vision Only", true);
+        ImpostorHearGhosts = new ToggleHolder(cfg, Section, "ImpostorHearGhosts", "Impostors Hear Dead", false);
+        HearInVent = new ToggleHolder(cfg, Section, "HearInVent", "Hear Impostors in Vents", false);
+        VentPrivateChat = new ToggleHolder(cfg, Section, "VentPrivateChat", "Private Talk in Vents", true);
+        CommsSabDisables = new ToggleHolder(cfg, Section, "CommsSabDisables", "Comms Sabotage Disables Voice", true);
+        CameraCanHear = new ToggleHolder(cfg, Section, "CameraCanHear", "Hear Through Cameras", true);
+        TeamRadio = new ToggleHolder(cfg, Section, "TeamRadio", "Team Radio", true);
+        TeamRadioImpostors = new ToggleHolder(cfg, Section, "TeamRadioImpostors", "Team Radio - Impostors", true)
+        {
+            Visible = TeamRadioSubOptionsVisible
+        };
+        TeamRadioVampires = new ToggleHolder(cfg, Section, "TeamRadioVampires", "Team Radio - Vampires", true)
+        {
+            Visible = TeamRadioSubOptionsVisible
+        };
+        TeamRadioLovers = new ToggleHolder(cfg, Section, "TeamRadioLovers", "Team Radio - Lovers", true)
+        {
+            Visible = TeamRadioSubOptionsVisible
+        };
+        TeamRadioInMeetings = new ToggleHolder(cfg, Section, "TeamRadioInMeetings", "Team Radio - Usable in Meetings", false)
+        {
+            Visible = TeamRadioSubOptionsVisible
+        };
+        TeamRadioInTasks = new ToggleHolder(cfg, Section, "TeamRadioInTasks", "Team Radio - Usable in Tasks Phase", true)
+        {
+            Visible = TeamRadioInMeetingsVisible
+        };
+        OnlyGhostsCanTalk = new ToggleHolder(cfg, Section, "OnlyGhostsCanTalk", "Only Ghosts can Talk/Hear", false);
+        GhostsHearEachOtherUnlimited = new ToggleHolder(cfg, Section, "GhostsHearEachOtherUnlimited", "Ghosts Hear Each Other Anywhere", false);
+        OnlyMeetingOrLobby = new ToggleHolder(cfg, Section, "OnlyMeetingOrLobby", "Meetings/Lobby Only", false);
+        OnlyMeetingOrLobbyAffectsGhosts = new ToggleHolder(cfg, Section, "OnlyMeetingOrLobbyAffectsGhosts", "Ghosts Also Meeting/Lobby Only", false)
+        {
+            Visible = MeetingLobbySubOptionsVisible
+        };
+    }
 
-    private static bool TeamRadioSubOptionsVisible() =>
-        OptionGroupSingleton<VoiceChatGameOptions>.Instance.TeamRadio;
+    private static VoiceChatGameOptions? _instance;
+    public static VoiceChatGameOptions Instance => _instance ??= new VoiceChatGameOptions(VoiceChatPluginMain.PluginConfig);
+    internal static VoiceChatGameOptions GetInstance() => Instance;
+
+    private static bool TeamRadioSubOptionsVisible() => Instance.TeamRadio.Value;
 
     private static bool TeamRadioInMeetingsVisible() =>
-        OptionGroupSingleton<VoiceChatGameOptions>.Instance.TeamRadio &&
-        OptionGroupSingleton<VoiceChatGameOptions>.Instance.TeamRadioInMeetings;
+        Instance.TeamRadio.Value && Instance.TeamRadioInMeetings.Value;
 
-    private static bool MeetingLobbySubOptionsVisible() =>
-        OptionGroupSingleton<VoiceChatGameOptions>.Instance.OnlyMeetingOrLobby;
-
-    internal static VoiceChatGameOptions GetInstance() =>
-        OptionGroupSingleton<VoiceChatGameOptions>.Instance;
+    private static bool MeetingLobbySubOptionsVisible() => Instance.OnlyMeetingOrLobby.Value;
 }

@@ -5,7 +5,6 @@ using VoiceChatPlugin.VoiceChat;
 using UnityEngine;
 using UnityEngine.Rendering;
 using Object = UnityEngine.Object;
-using MiraAPI.LocalSettings;
 
 namespace VoiceChatPlugin;
 
@@ -147,7 +146,7 @@ public static class PingTrackerPatch
     // (AspectPosition drives placement) and manual mode (X/Y sliders + edge clamping).
     public static void ApplySpeakingBarLayoutSettings()
     {
-        var settings = LocalSettingsTabSingleton<VoiceChatLocalSettings>.Instance;
+        var settings = VoiceSettings.Instance;
         if (settings == null) return;
 
         _manualLayout = settings.SpeakingBarManualLayout.Value;
@@ -379,7 +378,7 @@ public static class PingTrackerPatch
         _backdropSR.maskInteraction = SpriteMaskInteraction.None;
         VCOverlayCamera.EnsureOnTop(backdropGO);
 
-        var settings = LocalSettingsTabSingleton<VoiceChatLocalSettings>.Instance;
+        var settings = VoiceSettings.Instance;
         if (settings != null)
         {
             _barPosition  = settings.SpeakingBarPosition.Value;

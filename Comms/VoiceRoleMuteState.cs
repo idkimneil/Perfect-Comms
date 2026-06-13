@@ -1,7 +1,6 @@
 using System;
 using System.Collections.Generic;
 using HarmonyLib;
-using MiraAPI.Modifiers;
 using UnityEngine;
 
 namespace VoiceChatPlugin.VoiceChat;

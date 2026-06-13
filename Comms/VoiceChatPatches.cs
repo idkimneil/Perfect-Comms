@@ -1,8 +1,5 @@
 using System;
 using HarmonyLib;
-using MiraAPI.Keybinds;
-using MiraAPI.LocalSettings;
-using Rewired;
 using UnityEngine;
 
 namespace VoiceChatPlugin.VoiceChat;
@@ -34,21 +31,25 @@ public static class VoiceChatPatches
     [HarmonyPostfix, HarmonyPatch(typeof(KeyboardJoystick), nameof(KeyboardJoystick.Update))]
     static void KeyboardUpdate_Post()
     {
-        var settings = LocalSettingsTabSingleton<VoiceChatLocalSettings>.Instance;
+        var settings = VoiceSettings.Instance;
         PollMouseToggleBinds(settings);
 
-        var player = ReInput.players.GetPlayer(0);
+        VoiceChatKeybinds.ToggleMute.FireIfPressed();
+        VoiceChatKeybinds.ToggleSpeaker.FireIfPressed();
+        VoiceChatKeybinds.VolumeMenu.FireIfPressed();
+        VoiceChatKeybinds.LocalVoiceRefresh.FireIfPressed();
+        VoiceChatKeybinds.HostVoiceRefresh.FireIfPressed();
+        VoiceChatKeybinds.CycleTeamRadioChannel.FireIfPressed();
+        VoiceChatKeybinds.ToggleMicMode.FireIfPressed();
 
         bool canUseRadio = VoiceChatHudState.CanUseTeamRadioInput();
-        var action = VoiceChatKeybinds.TeamRadio.RewiredInputAction;
         bool held = false;
         bool down = false;
         bool up = false;
         if (canUseRadio)
         {
             var radioInput = ReadHoldInput(
-                player,
-                action?.id,
+                VoiceChatKeybinds.TeamRadio,
                 settings?.ImpostorRadioMouseBind.Value ?? VoiceMouseBind.Off);
 
             var radioHold = CombineImmediateMouseHold(radioInput.KeyboardHeld, radioInput.MouseHeld, ref _radioInputHeld);
@@ -63,7 +64,6 @@ public static class VoiceChatPatches
 
         VoiceChatHudState.UpdateTeamRadioHold(held, down, up);
 
-        var pttAction = VoiceChatKeybinds.PushToTalk.RewiredInputAction;
         if (!VoiceChatHudState.IsPushToTalkMode())
         {
             _pushToTalkInputHeld = false;
@@ -72,8 +72,7 @@ public static class VoiceChatPatches
         }
 
         var pttInput = ReadHoldInput(
-            player,
-            pttAction?.id,
+            VoiceChatKeybinds.PushToTalk,
             settings?.PushToTalkMouseBind.Value ?? VoiceMouseBind.Off);
 
         bool pttHeld = CombineImmediateMouseHold(pttInput.KeyboardHeld, pttInput.MouseHeld, ref _pushToTalkInputHeld).Held;
@@ -159,9 +158,9 @@ public static class VoiceChatPatches
             action();
     }
 
-    private static HoldInputSources ReadHoldInput(Player player, int? keyboardActionId, VoiceMouseBind mouseBind)
+    private static HoldInputSources ReadHoldInput(VoiceKeybind keybind, VoiceMouseBind mouseBind)
     {
-        bool keyboardHeld = keyboardActionId.HasValue && player.GetButton(keyboardActionId.Value);
+        bool keyboardHeld = keybind.IsHeld();
         return new HoldInputSources(keyboardHeld, IsMouseBindHeld(mouseBind));
     }
 

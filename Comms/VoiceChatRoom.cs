@@ -1,7 +1,6 @@
 using InnerNet;
 using VoiceChatPlugin.Audio;
 using VoiceChatPlugin.VoiceChat;
-using MiraAPI.LocalSettings;
 using UnityEngine;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
@@ -195,7 +194,7 @@ public class VoiceChatRoom
 
     public void RefreshLocalAudioSettings()
     {
-        var settings = LocalSettingsTabSingleton<VoiceChatLocalSettings>.Instance;
+        var settings = VoiceSettings.Instance;
         _voiceBackend?.SetMicVolume(settings?.MicVolume.Value ?? 1f);
         _voiceBackend?.SetNoiseGate(
             ApplyMicSensitivity(settings?.NoiseGateThreshold.Value ?? 0.003f, settings?.MicSensitivity.Value ?? 1f),
@@ -252,7 +251,7 @@ public class VoiceChatRoom
 
     internal void StartMicNow(string deviceName)
     {
-        var settings = LocalSettingsTabSingleton<VoiceChatLocalSettings>.Instance;
+        var settings = VoiceSettings.Instance;
         _voiceBackend?.SetMicrophone(deviceName, settings?.MicVolume.Value ?? 1f);
     }
 
@@ -530,7 +529,7 @@ public class VoiceChatRoom
     private void TickVoiceBackend(VoiceGameStateSnapshot? snapshot)
     {
         TrackHostSettingsAuthority(snapshot);
-        var settings = LocalSettingsTabSingleton<VoiceChatLocalSettings>.Instance;
+        var settings = VoiceSettings.Instance;
         var roomSettings = VoiceRoomSettingsState.Current;
         var endpoint = VoiceEndpointSettings.ResolveHostSelected(
             roomSettings,
@@ -1472,7 +1471,7 @@ public class VoiceChatRoom
 
     private void MaybeLogNetworkStats()
     {
-        var settings = LocalSettingsTabSingleton<VoiceChatLocalSettings>.Instance;
+        var settings = VoiceSettings.Instance;
         if (settings?.DebugVoiceStats.Value == true)
             MaybeLogDebugState();
     }

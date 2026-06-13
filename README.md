@@ -56,17 +56,15 @@ Some mods get extra voice behavior when installed:
 
 ## Install
 
-1. Download `PerfectComms.dll`, or use `PerfectComms+dependencies.zip` if you need the required mod dependencies included.
-2. Put `PerfectComms.dll` in `BepInEx/plugins`, or extract the dependency zip into your Among Us install folder.
-3. Start Among Us and open the Perfect Comms settings in-game.
-
-DLL-only install:
+1. Install BepInEx (Unity IL2CPP build) into your Among Us folder if you have not already.
+2. Put `PerfectComms.dll` in `BepInEx/plugins`.
+3. Start Among Us. Open Perfect Comms from the in-game Options menu (or press F10). Hosts open Voice Settings from the lobby game-settings console (or press F11).
 
 ```text
 BepInEx/plugins/PerfectComms.dll
 ```
 
-DLL-only installs require your mod pack to already include MiraAPI and Reactor. `PerfectComms+dependencies.zip` includes BepInEx, MiraAPI, and Reactor, but does not include TOU-Mira.
+Perfect Comms is fully standalone: it does not require Reactor or MiraAPI. It runs in the same `BepInEx/plugins` folder as mods that do use them (such as TOU-Mira) without conflict, and its TOU-Mira voice integrations activate automatically when TOU-Mira is present.
 
 ## Notice
 

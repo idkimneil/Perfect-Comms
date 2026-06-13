@@ -1,5 +1,4 @@
 using System;
-using MiraAPI.LocalSettings;
 
 namespace VoiceChatPlugin.VoiceChat;
 
@@ -88,7 +87,7 @@ public readonly record struct VoiceRoomSettingsSnapshot(
     {
         var s = VoiceChatGameOptions.GetInstance();
         var role = VoiceRoleIntegrationOptions.GetInstance();
-        var local = LocalSettingsTabSingleton<VoiceChatLocalSettings>.Instance;
+        var local = VoiceSettings.Instance;
         var backend = (VoiceTransportBackend)s.VoiceBackend.Value;
         var endpoint = VoiceEndpointSettings.Resolve(
             backend,

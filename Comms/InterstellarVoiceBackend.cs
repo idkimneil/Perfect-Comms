@@ -9,7 +9,6 @@ using NAudio.Wave;
 using Interstellar.Routing;
 using Interstellar.Routing.Router;
 using Interstellar.VoiceChat;
-using MiraAPI.LocalSettings;
 using UnityEngine;
 
 namespace VoiceChatPlugin.VoiceChat;
@@ -347,7 +346,7 @@ internal sealed class InterstellarVoiceBackend : IVoiceBackend
     {
         try
         {
-            return LocalSettingsTabSingleton<VoiceChatLocalSettings>.Instance?.AutoMicGain.Value ?? true;
+            return VoiceSettings.Instance?.AutoMicGain.Value ?? true;
         }
         catch
         {

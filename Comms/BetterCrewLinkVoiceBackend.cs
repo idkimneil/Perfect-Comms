@@ -7,7 +7,6 @@ using System.Threading;
 using System.Threading.Tasks;
 using Concentus.Enums;
 using Concentus.Structs;
-using MiraAPI.LocalSettings;
 using NAudio.Wave;
 using SIPSorcery.Net;
 using SocketIOClient;
@@ -525,7 +524,7 @@ internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
     {
         try
         {
-            return LocalSettingsTabSingleton<VoiceChatLocalSettings>.Instance?.AutoMicGain.Value ?? true;
+            return VoiceSettings.Instance?.AutoMicGain.Value ?? true;
         }
         catch
         {
@@ -1998,7 +1997,7 @@ internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
         turnCred = "";
         try
         {
-            var settings = LocalSettingsTabSingleton<VoiceChatLocalSettings>.Instance;
+            var settings = VoiceSettings.Instance;
             if (settings != null)
             {
                 natFix = settings.NatFix.Value;

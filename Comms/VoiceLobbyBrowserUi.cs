@@ -4,7 +4,6 @@ using System.Threading.Tasks;
 using HarmonyLib;
 using Il2CppInterop.Runtime.InteropTypes.Arrays;
 using InnerNet;
-using MiraAPI.LocalSettings;
 using TMPro;
 using UnityEngine;
 using UnityEngine.Events;
@@ -141,7 +140,7 @@ internal static class VoiceLobbyBrowserUi
 
     internal static void OpenInfoEditor()
     {
-        var settings = LocalSettingsTabSingleton<VoiceChatLocalSettings>.Instance;
+        var settings = VoiceSettings.Instance;
         _editTitle = settings?.LobbyBrowserTitle.Value ?? "Perfect Comms";
         _editLanguage = settings?.LobbyBrowserLanguage.Value ?? "English";
         _editingLanguage = false;
@@ -402,7 +401,7 @@ internal static class VoiceLobbyBrowserUi
         }
 
         BetterCrewLinkLobbyBrowserClient.Disconnect();
-        var settings = LocalSettingsTabSingleton<VoiceChatLocalSettings>.Instance;
+        var settings = VoiceSettings.Instance;
         var url = settings?.LobbyRegistryUrl.Value ?? "";
         _refreshTaskSource = VoiceLobbyBrowserSource.CloudflareLimited;
         _refreshTask = VoiceLobbyRegistryClient.ListAsync(url);
@@ -411,7 +410,7 @@ internal static class VoiceLobbyBrowserUi
 
     private static VoiceLobbyBrowserSource CurrentSource()
     {
-        var source = LocalSettingsTabSingleton<VoiceChatLocalSettings>.Instance?.LobbyBrowserSource.Value
+        var source = VoiceSettings.Instance?.LobbyBrowserSource.Value
                      ?? VoiceLobbyBrowserSource.BetterCrewLink;
         return Enum.IsDefined(typeof(VoiceLobbyBrowserSource), source)
             ? source
@@ -425,7 +424,7 @@ internal static class VoiceLobbyBrowserUi
 
     private static void ToggleSource()
     {
-        var settings = LocalSettingsTabSingleton<VoiceChatLocalSettings>.Instance;
+        var settings = VoiceSettings.Instance;
         if (settings == null) return;
         settings.LobbyBrowserSource.Value = CurrentSource() == VoiceLobbyBrowserSource.BetterCrewLink
             ? VoiceLobbyBrowserSource.CloudflareLimited
@@ -448,7 +447,7 @@ internal static class VoiceLobbyBrowserUi
 
     private static void EnsureBclLive()
     {
-        var settings = LocalSettingsTabSingleton<VoiceChatLocalSettings>.Instance;
+        var settings = VoiceSettings.Instance;
         BetterCrewLinkLobbyBrowserClient.EnsureConnected(settings?.BetterCrewLinkServerUrl.Value ?? "");
     }
 
@@ -688,7 +687,7 @@ internal static class VoiceLobbyBrowserUi
         {
             if (_bclJoinTask is { IsCompleted: false }) return;
             if (!BetterCrewLinkLobbyMetadata.TryGetLobbyId(listing, out var lobbyId)) return;
-            var settings = LocalSettingsTabSingleton<VoiceChatLocalSettings>.Instance;
+            var settings = VoiceSettings.Instance;
             var url = settings?.BetterCrewLinkServerUrl.Value ?? "";
             SetStatus("Joining BCL live lobby...");
             _bclJoinTask = BetterCrewLinkLobbyBrowserClient.JoinLobbyAsync(url, lobbyId);
@@ -771,7 +770,7 @@ internal static class VoiceLobbyBrowserUi
 
     private static void SaveEditor()
     {
-        var settings = LocalSettingsTabSingleton<VoiceChatLocalSettings>.Instance;
+        var settings = VoiceSettings.Instance;
         if (settings != null)
         {
             settings.LobbyBrowserTitle.Value = string.IsNullOrWhiteSpace(_editTitle) ? "Perfect Comms" : _editTitle.Trim();

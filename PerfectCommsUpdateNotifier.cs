@@ -1,7 +1,6 @@
 using System;
 using System.Threading.Tasks;
 using HarmonyLib;
-using MiraAPI.LocalSettings;
 using TMPro;
 using UnityEngine;
 using UnityEngine.Events;
@@ -29,7 +28,7 @@ internal static class PerfectCommsUpdateNotifier
         _shownLoadId = -1;
         Clear();
 
-        var settings = LocalSettingsTabSingleton<VoiceChatLocalSettings>.Instance;
+        var settings = VoiceSettings.Instance;
         if (settings?.UpdateNotificationsEnabled.Value == false) return;
 
         var url = settings?.UpdateNotificationUrl.Value ?? "";

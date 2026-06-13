@@ -1,0 +1,1226 @@
+using System;
+using System.Collections.Generic;
+using Il2CppInterop.Runtime.Injection;
+using TMPro;
+using UnityEngine;
+using UnityEngine.UI;
+using Object = UnityEngine.Object;
+
+namespace VoiceChatPlugin.VoiceChat;
+
+internal sealed class VoiceUiDriver : MonoBehaviour
+{
+    private static bool _registered;
+
+    public static void Register()
+    {
+        if (_registered) return;
+        _registered = true;
+        ClassInjector.RegisterTypeInIl2Cpp<VoiceUiDriver>();
+    }
+
+    public VoiceUiDriver(IntPtr ptr) : base(ptr) { }
+
+    void Update()
+    {
+        VoiceUiKit.Tick();
+    }
+}
+
+internal static class VoiceUiKit
+{
+    public static readonly Color32 Accent       = new(34, 211, 238, 255);
+    public static readonly Color32 AccentSoft    = new(34, 211, 238, 90);
+    public static readonly Color32 AccentFaint   = new(34, 211, 238, 28);
+    public static readonly Color32 AccentGlow     = new(34, 211, 238, 64);
+    public static readonly Color32 PanelOuter     = new(12, 15, 20, 235);
+    public static readonly Color32 PanelInner     = new(20, 25, 33, 235);
+    public static readonly Color32 PanelTop        = new(31, 39, 51, 240);
+    public static readonly Color32 PanelBottom     = new(15, 19, 26, 240);
+    public static readonly Color32 PanelShadow     = new(0, 0, 0, 170);
+    public static readonly Color32 RailSurface    = new(9, 11, 15, 235);
+    public static readonly Color32 HeaderSurface  = new(16, 20, 27, 245);
+    public static readonly Color32 HeaderTop       = new(26, 33, 44, 250);
+    public static readonly Color32 HeaderBottom    = new(14, 18, 25, 250);
+    public static readonly Color32 TopHighlight    = new(150, 170, 195, 32);
+    public static readonly Color32 Divider         = new(120, 138, 160, 26);
+    public static readonly Color32 TextPrimary     = new(228, 235, 245, 255);
+    public static readonly Color32 TextBright      = new(244, 249, 255, 255);
+    public static readonly Color32 TextMuted       = new(140, 156, 178, 255);
+    public static readonly Color32 TextFaint       = new(96, 110, 130, 255);
+    public static readonly Color32 TrackBg         = new(38, 46, 60, 255);
+    public static readonly Color32 ControlBg       = new(28, 34, 44, 255);
+    public static readonly Color32 ControlHover    = new(44, 53, 67, 255);
+    public static readonly Color32 RowHover        = new(255, 255, 255, 12);
+    public static readonly Color32 KnobOff         = new(150, 162, 180, 255);
+    public static readonly Color32 ToggleOffTrack  = new(46, 54, 68, 255);
+    public static readonly Color32 CloseHover      = new(230, 88, 96, 255);
+    public static readonly Color32 Danger          = new(230, 88, 96, 255);
+    public static readonly Color32 DangerDim       = new(70, 34, 38, 255);
+    public static readonly Color32 Clear           = new(0, 0, 0, 0);
+
+    private static readonly Dictionary<uint, Sprite> _solid = new();
+    private static Sprite? _rounded;
+    private static Sprite? _roundedSoft;
+    private static Sprite? _glow;
+    private static Sprite? _gradPanel;
+    private static Sprite? _gradHeader;
+    private static TMP_FontAsset? _font;
+    private static GameObject? _canvasRoot;
+    private static Canvas? _canvas;
+
+    public static readonly Color32 Backdrop = new(0, 0, 0, 150);
+
+    public static bool AnyPanelOpen =>
+        VoiceSettingsPanel.IsOpen || HostSettingsPanel.IsOpen;
+
+    private static bool _swallowActive;
+    private static bool _swallowSawRelease;
+    public static void SwallowClick() { _swallowActive = true; _swallowSawRelease = false; }
+    public static bool BlockGameInput => AnyPanelOpen || _swallowActive;
+    private static void UpdateSwallow()
+    {
+        if (!_swallowActive) return;
+        if (Input.GetMouseButton(0)) return;
+        if (_swallowSawRelease) _swallowActive = false;
+        else _swallowSawRelease = true;
+    }
+
+    private static int _tickFrame = -1;
+
+    public static void Tick()
+    {
+        int frame = Time.frameCount;
+        if (frame == _tickFrame) return;
+        _tickFrame = frame;
+        UpdateSwallow();
+
+        try { VoiceOptionsMenuEntry.TickButton(); } catch (Exception e) { VoiceChatPlugin.VoiceChatPluginMain.Logger.LogWarning("[PC-UI] TickButton threw: " + e.Message); }
+        try { VoiceSettingsPanel.Tick(); } catch (Exception e) { VoiceChatPlugin.VoiceChatPluginMain.Logger.LogWarning("[PC-UI] VoiceSettingsPanel.Tick threw: " + e.Message); }
+        try { HostSettingsPanel.Tick(); } catch (Exception e) { VoiceChatPlugin.VoiceChatPluginMain.Logger.LogWarning("[PC-UI] HostSettingsPanel.Tick threw: " + e.Message); }
+    }
+
+    public static void RaiseAbove(Transform panel, Transform? extra = null)
+    {
+        panel.SetAsLastSibling();
+        if (extra != null) extra.SetAsLastSibling();
+    }
+
+    public static Canvas Canvas
+    {
+        get { EnsureCanvas(); return _canvas!; }
+    }
+
+    public static RectTransform CanvasRect
+    {
+        get { EnsureCanvas(); return _canvas!.GetComponent<RectTransform>(); }
+    }
+
+    public static void EnsureCanvas()
+    {
+        if (_canvasRoot != null && _canvas != null)
+        {
+            EnsureDriver();
+            return;
+        }
+        _canvas = null;
+        _canvasRoot = null;
+
+        _canvasRoot = new GameObject("PerfectComms_UICanvas");
+        Object.DontDestroyOnLoad(_canvasRoot);
+        _canvasRoot.hideFlags |= HideFlags.DontUnloadUnusedAsset;
+        _canvasRoot.layer = LayerMask.NameToLayer("UI");
+
+        _canvas = _canvasRoot.AddComponent<Canvas>();
+        _canvas.renderMode = RenderMode.ScreenSpaceOverlay;
+        _canvas.sortingOrder = 1000;
+
+        var scaler = _canvasRoot.AddComponent<CanvasScaler>();
+        scaler.uiScaleMode = CanvasScaler.ScaleMode.ScaleWithScreenSize;
+        scaler.referenceResolution = new Vector2(1920f, 1080f);
+        scaler.screenMatchMode = CanvasScaler.ScreenMatchMode.MatchWidthOrHeight;
+        scaler.matchWidthOrHeight = 0.5f;
+
+        _canvasRoot.AddComponent<GraphicRaycaster>();
+        EnsureDriver();
+    }
+
+    public static void EnsureDriver()
+    {
+        if (_canvasRoot == null) return;
+        if (!_canvasRoot.activeSelf) _canvasRoot.SetActive(true);
+        VoiceUiDriver.Register();
+        var driver = _canvasRoot.GetComponent<VoiceUiDriver>();
+        if (driver == null)
+            driver = _canvasRoot.AddComponent<VoiceUiDriver>();
+        if (!driver.enabled) driver.enabled = true;
+    }
+
+    public static Sprite Solid(Color32 c)
+    {
+        uint key = ((uint)c.r << 24) | ((uint)c.g << 16) | ((uint)c.b << 8) | c.a;
+        if (_solid.TryGetValue(key, out var cached) && cached != null) return cached;
+        var tex = new Texture2D(1, 1, TextureFormat.RGBA32, false) { hideFlags = HideFlags.HideAndDontSave };
+        tex.SetPixel(0, 0, c);
+        tex.Apply();
+        var sprite = Sprite.Create(tex, new Rect(0, 0, 1, 1), new Vector2(0.5f, 0.5f));
+        sprite.hideFlags |= HideFlags.HideAndDontSave;
+        _solid[key] = sprite;
+        return sprite;
+    }
+
+    public static Sprite Rounded(bool soft = false)
+    {
+        if (soft && _roundedSoft != null) return _roundedSoft;
+        if (!soft && _rounded != null) return _rounded;
+
+        const int s = 64;
+        int rad = soft ? 32 : 16;
+        var tex = new Texture2D(s, s, TextureFormat.RGBA32, false) { hideFlags = HideFlags.HideAndDontSave };
+        for (int y = 0; y < s; y++)
+        for (int x = 0; x < s; x++)
+        {
+            float a = 1f;
+            int cx = x < rad ? rad : (x > s - 1 - rad ? s - 1 - rad : x);
+            int cy = y < rad ? rad : (y > s - 1 - rad ? s - 1 - rad : y);
+            if (cx != x || cy != y)
+            {
+                float d = Mathf.Sqrt((x - cx) * (x - cx) + (y - cy) * (y - cy));
+                a = Mathf.Clamp01(rad - d + 0.5f);
+            }
+            tex.SetPixel(x, y, new Color(1f, 1f, 1f, a));
+        }
+        tex.Apply();
+        var sprite = Sprite.Create(tex, new Rect(0, 0, s, s), new Vector2(0.5f, 0.5f), s, 0,
+            SpriteMeshType.FullRect, new Vector4(rad, rad, rad, rad));
+        sprite.hideFlags |= HideFlags.HideAndDontSave;
+        if (soft) _roundedSoft = sprite; else _rounded = sprite;
+        return sprite;
+    }
+
+    public static Sprite Glow()
+    {
+        if (_glow != null) return _glow;
+        const int s = 64;
+        float half = (s - 1) * 0.5f;
+        var tex = new Texture2D(s, s, TextureFormat.RGBA32, false) { hideFlags = HideFlags.HideAndDontSave };
+        for (int y = 0; y < s; y++)
+        for (int x = 0; x < s; x++)
+        {
+            float dx = Mathf.Abs(x - half) / half;
+            float dy = Mathf.Abs(y - half) / half;
+            float d = Mathf.Sqrt(dx * dx + dy * dy);
+            float a = Mathf.Clamp01(1f - d);
+            a = a * a;
+            tex.SetPixel(x, y, new Color(1f, 1f, 1f, a));
+        }
+        tex.Apply();
+        var sprite = Sprite.Create(tex, new Rect(0, 0, s, s), new Vector2(0.5f, 0.5f), s, 0,
+            SpriteMeshType.FullRect, new Vector4(24, 24, 24, 24));
+        sprite.hideFlags |= HideFlags.HideAndDontSave;
+        _glow = sprite;
+        return sprite;
+    }
+
+    private static Sprite Gradient(Color32 top, Color32 bottom, ref Sprite? cache)
+    {
+        if (cache != null) return cache;
+        const int s = 64;
+        int rad = 18;
+        var tex = new Texture2D(s, s, TextureFormat.RGBA32, false) { hideFlags = HideFlags.HideAndDontSave };
+        for (int y = 0; y < s; y++)
+        {
+            float t = y / (float)(s - 1);
+            Color col = Color.Lerp(bottom, top, t);
+            for (int x = 0; x < s; x++)
+            {
+                float a = 1f;
+                int cx = x < rad ? rad : (x > s - 1 - rad ? s - 1 - rad : x);
+                int cy = y < rad ? rad : (y > s - 1 - rad ? s - 1 - rad : y);
+                if (cx != x || cy != y)
+                {
+                    float d = Mathf.Sqrt((x - cx) * (x - cx) + (y - cy) * (y - cy));
+                    a = Mathf.Clamp01(rad - d + 0.5f);
+                }
+                var c = col; c.a *= a;
+                tex.SetPixel(x, y, c);
+            }
+        }
+        tex.Apply();
+        var sprite = Sprite.Create(tex, new Rect(0, 0, s, s), new Vector2(0.5f, 0.5f), s, 0,
+            SpriteMeshType.FullRect, new Vector4(rad, rad, rad, rad));
+        sprite.hideFlags |= HideFlags.HideAndDontSave;
+        cache = sprite;
+        return sprite;
+    }
+
+    public static Sprite PanelGradient() => Gradient(PanelTop, PanelBottom, ref _gradPanel);
+    public static Sprite HeaderGradient() => Gradient(HeaderTop, HeaderBottom, ref _gradHeader);
+
+    public static Image GlowImage(string name, Transform parent, Color32 color)
+    {
+        var rt = Rect(name, parent);
+        var img = rt.gameObject.AddComponent<Image>();
+        img.sprite = Glow();
+        img.type = Image.Type.Sliced;
+        img.color = color;
+        img.raycastTarget = false;
+        return img;
+    }
+
+    public static TMP_FontAsset? GameFont()
+    {
+        if (_font != null) return _font;
+        if (HudManager.InstanceExists)
+        {
+            foreach (var t in HudManager.Instance.GetComponentsInChildren<TextMeshPro>(true))
+                if (t != null && t.font != null) { _font = t.font; break; }
+        }
+        if (_font == null)
+        {
+            foreach (var t in Object.FindObjectsOfType<TextMeshPro>())
+                if (t != null && t.font != null) { _font = t.font; break; }
+        }
+        return _font;
+    }
+
+    public static RectTransform Rect(string name, Transform parent)
+    {
+        var go = new GameObject(name);
+        go.layer = LayerMask.NameToLayer("UI");
+        var rt = go.AddComponent<RectTransform>();
+        rt.SetParent(parent, false);
+        return rt;
+    }
+
+    public static RectTransform Anchor(this RectTransform rt, Vector2 min, Vector2 max, Vector2 pivot)
+    {
+        rt.anchorMin = min;
+        rt.anchorMax = max;
+        rt.pivot = pivot;
+        return rt;
+    }
+
+    public static Image Panel(string name, Transform parent, Color32 color, bool rounded = true, bool soft = false)
+    {
+        var rt = Rect(name, parent);
+        var img = rt.gameObject.AddComponent<Image>();
+        img.sprite = rounded ? Rounded(soft) : Solid(Color.white);
+        if (rounded) img.type = Image.Type.Sliced;
+        img.color = color;
+        img.raycastTarget = false;
+        return img;
+    }
+
+    public static TextMeshProUGUI Text(string name, Transform parent, string content, float size,
+        Color32 color, TextAlignmentOptions align, FontStyles style = FontStyles.Normal)
+    {
+        var rt = Rect(name, parent);
+        var tmp = rt.gameObject.AddComponent<TextMeshProUGUI>();
+        var font = GameFont();
+        if (font != null) tmp.font = font;
+        tmp.text = content;
+        tmp.fontSize = size;
+        tmp.color = color;
+        tmp.alignment = align;
+        tmp.fontStyle = style;
+        tmp.richText = true;
+        tmp.enableWordWrapping = false;
+        tmp.raycastTarget = false;
+        tmp.overflowMode = TextOverflowModes.Overflow;
+        return tmp;
+    }
+
+    public static bool Contains(RectTransform rt)
+    {
+        if (rt == null) return false;
+        return RectTransformUtility.RectangleContainsScreenPoint(rt, Input.mousePosition, null);
+    }
+
+    public static bool LocalPoint(RectTransform rt, out Vector2 local)
+    {
+        return RectTransformUtility.ScreenPointToLocalPointInRectangle(
+            rt, Input.mousePosition, null, out local);
+    }
+
+    public static Color32 Lerp(Color32 a, Color32 b, float t)
+    {
+        t = Mathf.Clamp01(t);
+        return new Color32(
+            (byte)Mathf.Lerp(a.r, b.r, t),
+            (byte)Mathf.Lerp(a.g, b.g, t),
+            (byte)Mathf.Lerp(a.b, b.b, t),
+            (byte)Mathf.Lerp(a.a, b.a, t));
+    }
+
+    public sealed class PanelShell
+    {
+        public readonly GameObject Root;
+        public readonly RectTransform RootRect;
+        public readonly CanvasGroup Group;
+        public readonly RectTransform HeaderRect;
+        public readonly RectTransform RailRoot;
+        public readonly RectTransform PaneRoot;
+        public readonly RectTransform PaneClip;
+        public readonly float Width;
+        public readonly float Height;
+        public readonly float RailWidth;
+        public readonly float PaneWidth;
+        public readonly float PaneHeight;
+
+        private readonly Image _closeImg;
+        private readonly RectTransform _closeRt;
+        private readonly Image _closeBar1;
+        private readonly Image _closeBar2;
+        private float _closeScale = 1f;
+        private readonly Action _onClose;
+        private bool _dragging;
+        private Vector2 _dragOffset;
+
+        public PanelShell(string objName, string title, float w, float h, Action onClose)
+        {
+            Width = w; Height = h;
+            _onClose = onClose;
+
+            Root = Rect(objName, Canvas.transform).gameObject;
+            RootRect = Root.GetComponent<RectTransform>();
+            RootRect.Anchor(new Vector2(0.5f, 0.5f), new Vector2(0.5f, 0.5f), new Vector2(0.5f, 0.5f));
+            RootRect.sizeDelta = new Vector2(w, h);
+            RootRect.anchoredPosition = Vector2.zero;
+
+            Group = Root.AddComponent<CanvasGroup>();
+
+            var backdrop = Rect("Backdrop", RootRect);
+            backdrop.Anchor(new Vector2(0.5f, 0.5f), new Vector2(0.5f, 0.5f), new Vector2(0.5f, 0.5f));
+            backdrop.sizeDelta = new Vector2(8000f, 8000f);
+            backdrop.anchoredPosition = Vector2.zero;
+            backdrop.SetAsFirstSibling();
+            var backdropImg = backdrop.gameObject.AddComponent<Image>();
+            backdropImg.sprite = Solid(Color.white);
+            backdropImg.color = Backdrop;
+            backdropImg.raycastTarget = true;
+
+            var shadow = GlowImage("DropShadow", RootRect, PanelShadow);
+            shadow.rectTransform.Anchor(Vector2.zero, Vector2.one, new Vector2(0.5f, 0.5f));
+            shadow.rectTransform.offsetMin = new Vector2(-46f, -54f);
+            shadow.rectTransform.offsetMax = new Vector2(46f, 38f);
+
+            var rimGlow = GlowImage("RimGlow", RootRect, AccentGlow);
+            rimGlow.rectTransform.Anchor(Vector2.zero, Vector2.one, new Vector2(0.5f, 0.5f));
+            rimGlow.rectTransform.offsetMin = new Vector2(-22f, -22f);
+            rimGlow.rectTransform.offsetMax = new Vector2(22f, 22f);
+
+            var surface = Rect("Surface", RootRect);
+            surface.Anchor(Vector2.zero, Vector2.one, new Vector2(0.5f, 0.5f));
+            surface.offsetMin = Vector2.zero;
+            surface.offsetMax = Vector2.zero;
+            var surfaceImg = surface.gameObject.AddComponent<Image>();
+            surfaceImg.sprite = PanelGradient();
+            surfaceImg.type = Image.Type.Sliced;
+            surfaceImg.color = Color.white;
+            surfaceImg.raycastTarget = false;
+
+            var topGlow = Panel("TopHighlight", RootRect, TopHighlight, false);
+            topGlow.rectTransform.Anchor(new Vector2(0f, 1f), new Vector2(1f, 1f), new Vector2(0.5f, 1f));
+            topGlow.rectTransform.sizeDelta = new Vector2(-12f, 2f);
+            topGlow.rectTransform.anchoredPosition = new Vector2(0f, -4f);
+
+            const float headerH = 76f;
+            HeaderRect = Rect("Header", RootRect);
+            HeaderRect.Anchor(new Vector2(0f, 1f), new Vector2(1f, 1f), new Vector2(0.5f, 1f));
+            HeaderRect.sizeDelta = new Vector2(0f, headerH);
+            HeaderRect.anchoredPosition = Vector2.zero;
+            var headerBg = HeaderRect.gameObject.AddComponent<Image>();
+            headerBg.sprite = HeaderGradient();
+            headerBg.type = Image.Type.Sliced;
+            headerBg.color = Color.white;
+            headerBg.raycastTarget = false;
+
+            var accentGlow = GlowImage("HeaderAccentGlow", HeaderRect, AccentGlow);
+            accentGlow.rectTransform.Anchor(new Vector2(0f, 0f), new Vector2(1f, 0f), new Vector2(0.5f, 0f));
+            accentGlow.rectTransform.sizeDelta = new Vector2(-24f, 22f);
+            accentGlow.rectTransform.anchoredPosition = new Vector2(0f, 2f);
+
+            var accentLine = Panel("HeaderAccent", HeaderRect, Accent, false);
+            accentLine.rectTransform.Anchor(new Vector2(0f, 0f), new Vector2(1f, 0f), new Vector2(0.5f, 0f));
+            accentLine.rectTransform.sizeDelta = new Vector2(-36f, 3f);
+            accentLine.rectTransform.anchoredPosition = new Vector2(0f, 0f);
+
+            var titleTmp = Text("Title", HeaderRect, title, 32f, TextBright, TextAlignmentOptions.Left, FontStyles.Bold);
+            titleTmp.characterSpacing = 6f;
+            titleTmp.rectTransform.Anchor(new Vector2(0f, 0.5f), new Vector2(1f, 0.5f), new Vector2(0f, 0.5f));
+            titleTmp.rectTransform.sizeDelta = new Vector2(-200f, headerH);
+            titleTmp.rectTransform.anchoredPosition = new Vector2(38f, 0f);
+
+            _closeRt = Rect("Close", HeaderRect);
+            _closeRt.Anchor(new Vector2(1f, 0.5f), new Vector2(1f, 0.5f), new Vector2(1f, 0.5f));
+            _closeRt.sizeDelta = new Vector2(46f, 46f);
+            _closeRt.anchoredPosition = new Vector2(-24f, 0f);
+            _closeImg = _closeRt.gameObject.AddComponent<Image>();
+            _closeImg.sprite = Rounded(true);
+            _closeImg.type = Image.Type.Sliced;
+            _closeImg.color = ControlBg;
+            _closeImg.raycastTarget = false;
+            _closeBar1 = CloseBar(_closeRt, 45f);
+            _closeBar2 = CloseBar(_closeRt, -45f);
+
+            const float pad = 20f;
+            const float clipPad = 8f;
+            RailWidth = Mathf.Round(w * 0.25f);
+
+            RailRoot = Rect("Rail", RootRect);
+            RailRoot.Anchor(new Vector2(0f, 0f), new Vector2(0f, 1f), new Vector2(0f, 0.5f));
+            RailRoot.offsetMin = new Vector2(0f, 0f);
+            RailRoot.offsetMax = new Vector2(RailWidth, -headerH);
+            var railBg = RailRoot.gameObject.AddComponent<Image>();
+            railBg.sprite = Rounded(true);
+            railBg.type = Image.Type.Sliced;
+            railBg.color = RailSurface;
+            railBg.raycastTarget = false;
+
+            var railDiv = Rect("RailDivider", RootRect);
+            railDiv.Anchor(new Vector2(0f, 0f), new Vector2(0f, 1f), new Vector2(0f, 0.5f));
+            railDiv.offsetMin = new Vector2(RailWidth, 0f);
+            railDiv.offsetMax = new Vector2(RailWidth + 1.5f, -headerH);
+            var railDivImg = railDiv.gameObject.AddComponent<Image>();
+            railDivImg.sprite = Solid(Color.white);
+            railDivImg.color = Divider;
+            railDivImg.raycastTarget = false;
+
+            PaneWidth = w - RailWidth - pad * 2f;
+            PaneHeight = h - headerH - pad * 2f;
+
+            var inner = Panel("InnerPane", RootRect, PanelInner, true);
+            inner.color = new Color32(0, 0, 0, 70);
+            inner.rectTransform.Anchor(new Vector2(0f, 0f), new Vector2(1f, 1f), new Vector2(0.5f, 0.5f));
+            inner.rectTransform.offsetMin = new Vector2(RailWidth + pad, pad);
+            inner.rectTransform.offsetMax = new Vector2(-pad, -headerH - pad);
+
+            PaneClip = Rect("PaneClip", RootRect);
+            PaneClip.Anchor(new Vector2(0f, 0f), new Vector2(1f, 1f), new Vector2(0.5f, 0.5f));
+            PaneClip.offsetMin = new Vector2(RailWidth + pad + clipPad, pad + clipPad);
+            PaneClip.offsetMax = new Vector2(-pad - clipPad, -headerH - pad - clipPad);
+            PaneClip.gameObject.AddComponent<RectMask2D>();
+
+            PaneRoot = Rect("PaneContent", PaneClip);
+            PaneRoot.Anchor(new Vector2(0f, 1f), new Vector2(1f, 1f), new Vector2(0.5f, 1f));
+            PaneRoot.offsetMin = new Vector2(0f, 0f);
+            PaneRoot.offsetMax = new Vector2(0f, 0f);
+            PaneRoot.sizeDelta = new Vector2(0f, 0f);
+            PaneRoot.anchoredPosition = Vector2.zero;
+        }
+
+        private static Image CloseBar(RectTransform parent, float angle)
+        {
+            var rt = Rect("CloseBar", parent);
+            rt.Anchor(new Vector2(0.5f, 0.5f), new Vector2(0.5f, 0.5f), new Vector2(0.5f, 0.5f));
+            rt.sizeDelta = new Vector2(22f, 3.4f);
+            rt.anchoredPosition = Vector2.zero;
+            rt.localRotation = Quaternion.Euler(0f, 0f, angle);
+            var img = rt.gameObject.AddComponent<Image>();
+            img.sprite = Rounded(true);
+            img.type = Image.Type.Sliced;
+            img.color = TextMuted;
+            img.raycastTarget = false;
+            return img;
+        }
+
+        public void TickHeader()
+        {
+            bool overClose = Contains(_closeRt);
+            _closeImg.color = Lerp(_closeImg.color, overClose ? CloseHover : ControlBg, 0.3f);
+            var barColor = Lerp(_closeBar1.color, overClose ? TextBright : TextMuted, 0.3f);
+            _closeBar1.color = barColor;
+            _closeBar2.color = barColor;
+            _closeScale = Mathf.Lerp(_closeScale, overClose ? 1.14f : 1f, 0.3f);
+            _closeRt.localScale = new Vector3(_closeScale, _closeScale, 1f);
+
+            if (Input.GetMouseButtonDown(0))
+            {
+                if (overClose) { _onClose(); return; }
+                if (Contains(HeaderRect) && LocalPoint(CanvasRect, out var lp))
+                {
+                    _dragging = true;
+                    _dragOffset = RootRect.anchoredPosition - lp;
+                }
+            }
+            else if (Input.GetMouseButton(0) && _dragging)
+            {
+                if (LocalPoint(CanvasRect, out var lp))
+                    RootRect.anchoredPosition = lp + _dragOffset;
+            }
+            else
+            {
+                _dragging = false;
+            }
+        }
+    }
+
+    public sealed class CategoryRail
+    {
+        private sealed class Item
+        {
+            public RectTransform Root = null!;
+            public Image Hover = null!;
+            public TextMeshProUGUI Label = null!;
+            public float Y;
+        }
+
+        private readonly List<Item> _items = new();
+        private int _selected;
+        public int Selected => _selected;
+        public Action<int>? OnSelect;
+
+        private RectTransform _highlight = null!;
+        private RectTransform _hiBar = null!;
+        private float _hiY;
+        private const float RowH = 62f;
+        private const float ItemH = RowH - 8f;
+
+        public void Build(RectTransform railRoot, float railWidth, string[] labels)
+        {
+            const float top = -22f;
+
+            var hiGlow = GlowImage("RailGlow", railRoot, AccentGlow);
+            _highlight = Rect("RailHighlight", railRoot);
+            _highlight.Anchor(new Vector2(0f, 1f), new Vector2(1f, 1f), new Vector2(0.5f, 1f));
+            _highlight.sizeDelta = new Vector2(-16f, ItemH);
+            var hiImg = _highlight.gameObject.AddComponent<Image>();
+            hiImg.sprite = Rounded();
+            hiImg.type = Image.Type.Sliced;
+            hiImg.color = AccentFaint;
+            hiImg.raycastTarget = false;
+            hiGlow.rectTransform.SetParent(_highlight, false);
+            hiGlow.rectTransform.Anchor(Vector2.zero, Vector2.one, new Vector2(0.5f, 0.5f));
+            hiGlow.rectTransform.offsetMin = new Vector2(-6f, -6f);
+            hiGlow.rectTransform.offsetMax = new Vector2(6f, 6f);
+
+            _hiBar = Rect("RailBar", _highlight);
+            _hiBar.Anchor(new Vector2(0f, 0.5f), new Vector2(0f, 0.5f), new Vector2(0f, 0.5f));
+            _hiBar.sizeDelta = new Vector2(4f, ItemH - 14f);
+            _hiBar.anchoredPosition = new Vector2(6f, 0f);
+            var barImg = _hiBar.gameObject.AddComponent<Image>();
+            barImg.sprite = Rounded(true);
+            barImg.type = Image.Type.Sliced;
+            barImg.color = Accent;
+            barImg.raycastTarget = false;
+
+            float y = top;
+            for (int i = 0; i < labels.Length; i++)
+            {
+                var rt = Rect("Cat_" + labels[i], railRoot);
+                rt.Anchor(new Vector2(0f, 1f), new Vector2(1f, 1f), new Vector2(0.5f, 1f));
+                rt.sizeDelta = new Vector2(-16f, ItemH);
+                rt.anchoredPosition = new Vector2(0f, y);
+
+                var hover = rt.gameObject.AddComponent<Image>();
+                hover.sprite = Rounded();
+                hover.type = Image.Type.Sliced;
+                hover.color = Clear;
+                hover.raycastTarget = false;
+
+                var label = Text("Label", rt, labels[i], 19f, TextMuted, TextAlignmentOptions.Left, FontStyles.Bold);
+                label.characterSpacing = 3f;
+                label.rectTransform.Anchor(new Vector2(0f, 0.5f), new Vector2(1f, 0.5f), new Vector2(0f, 0.5f));
+                label.rectTransform.sizeDelta = new Vector2(-32f, RowH);
+                label.rectTransform.anchoredPosition = new Vector2(22f, 0f);
+
+                _items.Add(new Item { Root = rt, Hover = hover, Label = label, Y = y });
+                y -= RowH;
+            }
+
+            _hiY = _items.Count > 0 ? _items[_selected].Y : top;
+            _highlight.anchoredPosition = new Vector2(0f, _hiY);
+            Apply();
+        }
+
+        public void Tick()
+        {
+            for (int i = 0; i < _items.Count; i++)
+            {
+                bool sel = i == _selected;
+                var it = _items[i];
+                bool hover = !sel && Contains(it.Root);
+                it.Hover.color = Lerp(it.Hover.color, hover ? RowHover : Clear, 0.25f);
+                it.Label.color = Lerp(it.Label.color, sel ? Accent : (hover ? TextPrimary : TextMuted), 0.25f);
+                if (hover && Input.GetMouseButtonDown(0)) Select(i);
+            }
+
+            if (_items.Count > 0)
+            {
+                float target = _items[_selected].Y;
+                _hiY = Mathf.Lerp(_hiY, target, 0.3f);
+                _highlight.anchoredPosition = new Vector2(0f, _hiY);
+            }
+        }
+
+        public void Select(int idx)
+        {
+            if (idx < 0 || idx >= _items.Count || idx == _selected) { if (idx == _selected) return; }
+            _selected = Mathf.Clamp(idx, 0, _items.Count - 1);
+            Apply();
+            OnSelect?.Invoke(_selected);
+        }
+
+        private void Apply()
+        {
+            for (int i = 0; i < _items.Count; i++)
+                _items[i].Label.color = i == _selected ? Accent : TextMuted;
+        }
+    }
+
+    public abstract class Row
+    {
+        public RectTransform Root = null!;
+        public Image? Hover;
+        public float Height = 72f;
+        protected float PaneW;
+        public virtual void Tick(float dt) { }
+        public virtual bool IsDragging => false;
+        public virtual void OnMouseDown() { }
+        public virtual void OnMouseDrag() { }
+        public virtual void OnMouseUp() { }
+
+        public const float EdgePad = 22f;
+        public const float ColGap = 24f;
+        public const float ValueColW = 110f;
+
+        protected float LabelColW => Mathf.Round(PaneW * 0.42f);
+        protected float ControlLeft => EdgePad + LabelColW + ColGap;
+        protected float ControlRight => PaneW - EdgePad - ValueColW - ColGap;
+        protected float ControlColW => Mathf.Max(120f, ControlRight - ControlLeft);
+
+        protected void BuildBase(RectTransform pane, string label, float width, float y, float height)
+        {
+            Height = height;
+            PaneW = width;
+            Root = Rect("Row", pane);
+            Root.Anchor(new Vector2(0f, 1f), new Vector2(1f, 1f), new Vector2(0.5f, 1f));
+            Root.sizeDelta = new Vector2(0f, height);
+            Root.anchoredPosition = new Vector2(0f, y);
+
+            Hover = Panel("Hover", Root, Clear, true);
+            Hover.rectTransform.Anchor(Vector2.zero, Vector2.one, new Vector2(0.5f, 0.5f));
+            Hover.rectTransform.offsetMin = new Vector2(0f, 3f);
+            Hover.rectTransform.offsetMax = new Vector2(0f, -3f);
+
+            var title = Text("RowLabel", Root, label, 20f, TextPrimary, TextAlignmentOptions.Left);
+            title.overflowMode = TextOverflowModes.Ellipsis;
+            title.rectTransform.Anchor(new Vector2(0f, 0.5f), new Vector2(0f, 0.5f), new Vector2(0f, 0.5f));
+            title.rectTransform.sizeDelta = new Vector2(LabelColW, height);
+            title.rectTransform.anchoredPosition = new Vector2(EdgePad, 0f);
+        }
+
+        protected void TickHover()
+        {
+            if (Hover == null) return;
+            bool over = Contains(Root);
+            Hover.color = Lerp(Hover.color, over ? RowHover : Clear, 0.22f);
+        }
+    }
+
+    public sealed class ToggleRow : Row
+    {
+        private readonly Func<bool> _get;
+        private readonly Action<bool> _set;
+        private Image _track = null!;
+        private Image _glow = null!;
+        private RectTransform _knob = null!;
+        private Image _knobImg = null!;
+        private Image _knobShadow = null!;
+        private float _knobT;
+
+        public ToggleRow(Func<bool> get, Action<bool> set) { _get = get; _set = set; }
+
+        public ToggleRow Build(RectTransform pane, string label, float width, float y, float height)
+        {
+            BuildBase(pane, label, width, y, height);
+
+            var trackRt = Rect("Track", Root);
+            trackRt.Anchor(new Vector2(0f, 0.5f), new Vector2(0f, 0.5f), new Vector2(0f, 0.5f));
+            trackRt.sizeDelta = new Vector2(66f, 34f);
+            trackRt.anchoredPosition = new Vector2(ControlLeft, 0f);
+
+            _glow = GlowImage("TrackGlow", trackRt, Clear);
+            _glow.rectTransform.Anchor(Vector2.zero, Vector2.one, new Vector2(0.5f, 0.5f));
+            _glow.rectTransform.offsetMin = new Vector2(-10f, -10f);
+            _glow.rectTransform.offsetMax = new Vector2(10f, 10f);
+
+            _track = trackRt.gameObject.AddComponent<Image>();
+            _track.sprite = Rounded(true);
+            _track.type = Image.Type.Sliced;
+            _track.color = ToggleOffTrack;
+            _track.raycastTarget = false;
+
+            _knob = Rect("Knob", trackRt);
+            _knob.Anchor(new Vector2(0f, 0.5f), new Vector2(0f, 0.5f), new Vector2(0.5f, 0.5f));
+            _knob.sizeDelta = new Vector2(26f, 26f);
+
+            _knobShadow = GlowImage("KnobShadow", _knob, new Color32(0, 0, 0, 130));
+            _knobShadow.rectTransform.Anchor(Vector2.zero, Vector2.one, new Vector2(0.5f, 0.5f));
+            _knobShadow.rectTransform.offsetMin = new Vector2(-5f, -7f);
+            _knobShadow.rectTransform.offsetMax = new Vector2(5f, 3f);
+
+            _knobImg = Rect("KnobFill", _knob).gameObject.AddComponent<Image>();
+            _knobImg.rectTransform.Anchor(Vector2.zero, Vector2.one, new Vector2(0.5f, 0.5f));
+            _knobImg.rectTransform.offsetMin = Vector2.zero;
+            _knobImg.rectTransform.offsetMax = Vector2.zero;
+            _knobImg.sprite = Rounded(true);
+            _knobImg.type = Image.Type.Sliced;
+            _knobImg.color = KnobOff;
+            _knobImg.raycastTarget = false;
+
+            _knobT = _get() ? 1f : 0f;
+            ApplyKnob();
+            return this;
+        }
+
+        private void ApplyKnob()
+        {
+            float e = _knobT * _knobT * (3f - 2f * _knobT);
+            _knob.anchoredPosition = new Vector2(Mathf.Lerp(20f, 46f, e), 0f);
+            _track.color = Lerp(ToggleOffTrack, Accent, _knobT);
+            _knobImg.color = Lerp(KnobOff, TextBright, _knobT);
+            var g = AccentGlow; g.a = (byte)(AccentGlow.a * _knobT); _glow.color = g;
+        }
+
+        public override void OnMouseDown()
+        {
+            if (Contains(Root)) _set(!_get());
+        }
+
+        public override void Tick(float dt)
+        {
+            TickHover();
+            float target = _get() ? 1f : 0f;
+            if (Mathf.Abs(_knobT - target) > 0.001f)
+            {
+                _knobT = Mathf.MoveTowards(_knobT, target, dt * 8f);
+                ApplyKnob();
+            }
+        }
+    }
+
+    public sealed class SliderRow : Row
+    {
+        private readonly Func<float> _get;
+        private readonly Action<float> _set;
+        private readonly float _min, _max;
+        private readonly Func<float, string> _fmt;
+        private RectTransform _track = null!;
+        private RectTransform _fill = null!;
+        private Image _fillGlow = null!;
+        private RectTransform _knob = null!;
+        private TextMeshProUGUI _value = null!;
+        private bool _dragging;
+        public override bool IsDragging => _dragging;
+
+        public SliderRow(Func<float> get, Action<float> set, float min, float max, Func<float, string> fmt)
+        { _get = get; _set = set; _min = min; _max = max; _fmt = fmt; }
+
+        public SliderRow Build(RectTransform pane, string label, float width, float y, float height)
+        {
+            BuildBase(pane, label, width, y, height);
+
+            var pill = Rect("Pill", Root);
+            pill.Anchor(new Vector2(1f, 0.5f), new Vector2(1f, 0.5f), new Vector2(1f, 0.5f));
+            pill.sizeDelta = new Vector2(ValueColW, 36f);
+            pill.anchoredPosition = new Vector2(-EdgePad, 0f);
+            var pillImg = pill.gameObject.AddComponent<Image>();
+            pillImg.sprite = Rounded(true);
+            pillImg.type = Image.Type.Sliced;
+            pillImg.color = AccentFaint;
+            pillImg.raycastTarget = false;
+
+            _value = Text("Value", pill, "", 19f, Accent, TextAlignmentOptions.Center, FontStyles.Bold);
+            _value.rectTransform.Anchor(Vector2.zero, Vector2.one, new Vector2(0.5f, 0.5f));
+            _value.rectTransform.offsetMin = new Vector2(6f, 0f);
+            _value.rectTransform.offsetMax = new Vector2(-6f, 0f);
+
+            _track = Rect("Track", Root);
+            _track.Anchor(new Vector2(0f, 0.5f), new Vector2(0f, 0.5f), new Vector2(0f, 0.5f));
+            float trackW = ControlColW;
+            _track.sizeDelta = new Vector2(trackW, 9f);
+            _track.anchoredPosition = new Vector2(ControlLeft, 0f);
+            var trackImg = _track.gameObject.AddComponent<Image>();
+            trackImg.sprite = Rounded(true);
+            trackImg.type = Image.Type.Sliced;
+            trackImg.color = TrackBg;
+            trackImg.raycastTarget = false;
+
+            _fillGlow = GlowImage("FillGlow", _track, AccentGlow);
+            _fillGlow.rectTransform.Anchor(new Vector2(0f, 0.5f), new Vector2(0f, 0.5f), new Vector2(0f, 0.5f));
+
+            _fill = Rect("Fill", _track);
+            _fill.Anchor(new Vector2(0f, 0.5f), new Vector2(0f, 0.5f), new Vector2(0f, 0.5f));
+            _fill.sizeDelta = new Vector2(0f, 9f);
+            var fillImg = _fill.gameObject.AddComponent<Image>();
+            fillImg.sprite = Rounded(true);
+            fillImg.type = Image.Type.Sliced;
+            fillImg.color = Accent;
+            fillImg.raycastTarget = false;
+
+            _knob = Rect("Knob", _track);
+            _knob.Anchor(new Vector2(0f, 0.5f), new Vector2(0f, 0.5f), new Vector2(0.5f, 0.5f));
+            _knob.sizeDelta = new Vector2(22f, 22f);
+            var knobShadow = GlowImage("KnobShadow", _knob, new Color32(0, 0, 0, 140));
+            knobShadow.rectTransform.Anchor(Vector2.zero, Vector2.one, new Vector2(0.5f, 0.5f));
+            knobShadow.rectTransform.offsetMin = new Vector2(-5f, -7f);
+            knobShadow.rectTransform.offsetMax = new Vector2(5f, 3f);
+            var knobImg = Rect("KnobFill", _knob).gameObject.AddComponent<Image>();
+            knobImg.rectTransform.Anchor(Vector2.zero, Vector2.one, new Vector2(0.5f, 0.5f));
+            knobImg.rectTransform.offsetMin = Vector2.zero;
+            knobImg.rectTransform.offsetMax = Vector2.zero;
+            knobImg.sprite = Rounded(true);
+            knobImg.type = Image.Type.Sliced;
+            knobImg.color = TextBright;
+            knobImg.raycastTarget = false;
+
+            ApplyVisual(Normalized());
+            return this;
+        }
+
+        private float Normalized() => Mathf.Approximately(_max, _min) ? 0f : Mathf.Clamp01((_get() - _min) / (_max - _min));
+
+        private void ApplyVisual(float t)
+        {
+            float w = _track.sizeDelta.x;
+            _fill.sizeDelta = new Vector2(w * t, 9f);
+            _fillGlow.rectTransform.sizeDelta = new Vector2(w * t + 14f, 22f);
+            _knob.anchoredPosition = new Vector2(w * t, 0f);
+            _value.text = _fmt(_get());
+        }
+
+        public override void OnMouseDown()
+        {
+            if (Contains(_track) || Contains(_knob)) { _dragging = true; ApplyFromMouse(); }
+        }
+
+        public override void OnMouseDrag()
+        {
+            if (_dragging) ApplyFromMouse();
+        }
+
+        public override void OnMouseUp() => _dragging = false;
+
+        private void ApplyFromMouse()
+        {
+            if (!LocalPoint(_track, out var lp)) return;
+            float w = _track.sizeDelta.x;
+            float t = Mathf.Clamp01(lp.x / w);
+            _set(_min + t * (_max - _min));
+            ApplyVisual(t);
+        }
+
+        public override void Tick(float dt)
+        {
+            TickHover();
+            if (!_dragging) ApplyVisual(Normalized());
+        }
+    }
+
+    public sealed class StepperRow : Row
+    {
+        private readonly Func<int> _getIndex;
+        private readonly Action<int> _setIndex;
+        private readonly Func<int> _count;
+        private readonly Func<int, string> _labelOf;
+        private Image _left = null!;
+        private Image _right = null!;
+        private TextMeshProUGUI _value = null!;
+
+        public StepperRow(Func<int> getIndex, Action<int> setIndex, Func<int> count, Func<int, string> labelOf)
+        { _getIndex = getIndex; _setIndex = setIndex; _count = count; _labelOf = labelOf; }
+
+        public StepperRow Build(RectTransform pane, string label, float width, float y, float height)
+        {
+            BuildBase(pane, label, width, y, height);
+
+            float groupW = (PaneW - EdgePad) - ControlLeft;
+            var group = Rect("Stepper", Root);
+            group.Anchor(new Vector2(0f, 0.5f), new Vector2(0f, 0.5f), new Vector2(0f, 0.5f));
+            group.sizeDelta = new Vector2(groupW, 40f);
+            group.anchoredPosition = new Vector2(ControlLeft, 0f);
+
+            var valuePill = Rect("ValuePill", group);
+            valuePill.Anchor(new Vector2(0f, 0.5f), new Vector2(1f, 0.5f), new Vector2(0.5f, 0.5f));
+            valuePill.offsetMin = new Vector2(44f, -1f);
+            valuePill.offsetMax = new Vector2(-44f, 1f);
+            var valuePillImg = valuePill.gameObject.AddComponent<Image>();
+            valuePillImg.sprite = Rounded(true);
+            valuePillImg.type = Image.Type.Sliced;
+            valuePillImg.color = AccentFaint;
+            valuePillImg.raycastTarget = false;
+
+            _value = Text("Value", valuePill, "", 18f, Accent, TextAlignmentOptions.Center, FontStyles.Bold);
+            _value.overflowMode = TextOverflowModes.Ellipsis;
+            _value.rectTransform.Anchor(Vector2.zero, Vector2.one, new Vector2(0.5f, 0.5f));
+            _value.rectTransform.offsetMin = new Vector2(8f, 0f);
+            _value.rectTransform.offsetMax = new Vector2(-8f, 0f);
+
+            _left = Arrow(group, "<", new Vector2(0f, 0.5f), new Vector2(0f, 0.5f), new Vector2(2f, 0f));
+            _right = Arrow(group, ">", new Vector2(1f, 0.5f), new Vector2(1f, 0.5f), new Vector2(-2f, 0f));
+
+            Refresh();
+            return this;
+        }
+
+        private Image Arrow(RectTransform parent, string glyph, Vector2 aMin, Vector2 aMax, Vector2 pos)
+        {
+            var rt = Rect("Arrow", parent);
+            rt.Anchor(aMin, aMax, new Vector2(aMin.x, 0.5f));
+            rt.sizeDelta = new Vector2(38f, 38f);
+            rt.anchoredPosition = pos;
+            var img = rt.gameObject.AddComponent<Image>();
+            img.sprite = Rounded();
+            img.type = Image.Type.Sliced;
+            img.color = ControlBg;
+            img.raycastTarget = false;
+            var t = Text("G", rt, glyph, 24f, TextMuted, TextAlignmentOptions.Center, FontStyles.Bold);
+            t.rectTransform.Anchor(Vector2.zero, Vector2.one, new Vector2(0.5f, 0.5f));
+            t.rectTransform.offsetMin = Vector2.zero;
+            t.rectTransform.offsetMax = Vector2.zero;
+            return img;
+        }
+
+        public void Refresh()
+        {
+            int n = _count();
+            int i = n > 0 ? Mathf.Clamp(_getIndex(), 0, n - 1) : 0;
+            _value.text = n > 0 ? _labelOf(i) : "<color=#607282>--</color>";
+        }
+
+        public override void OnMouseDown()
+        {
+            int n = _count();
+            if (n <= 0) return;
+            int cur = Mathf.Clamp(_getIndex(), 0, n - 1);
+            if (Contains(_left.GetComponent<RectTransform>())) { _setIndex((cur - 1 + n) % n); Refresh(); }
+            else if (Contains(_right.GetComponent<RectTransform>())) { _setIndex((cur + 1) % n); Refresh(); }
+        }
+
+        public override void Tick(float dt)
+        {
+            TickHover();
+            ArrowTick(_left);
+            ArrowTick(_right);
+        }
+
+        private static void ArrowTick(Image arrow)
+        {
+            var rt = arrow.GetComponent<RectTransform>();
+            bool over = Contains(rt);
+            bool press = over && Input.GetMouseButton(0);
+            arrow.color = Lerp(arrow.color, over ? ControlHover : ControlBg, 0.25f);
+            float s = Mathf.Lerp(rt.localScale.x, press ? 0.9f : 1f, 0.35f);
+            rt.localScale = new Vector3(s, s, 1f);
+        }
+    }
+
+    public sealed class RebindRow : Row
+    {
+        private readonly Func<KeyCode> _get;
+        private readonly Action<KeyCode> _set;
+        private readonly Action _clear;
+        private Image _btn = null!;
+        private RectTransform _btnRt = null!;
+        private TextMeshProUGUI _label = null!;
+        private RectTransform _capRow = null!;
+        private Image _clearBtn = null!;
+        private Image _cancelBtn = null!;
+        private float _fullBtnW;
+        private bool _capturing;
+        private bool _armed;
+        private static RebindRow? _active;
+
+        private const float CapW = 170f;
+
+        public RebindRow(Func<KeyCode> get, Action<KeyCode> set, Action clear)
+        { _get = get; _set = set; _clear = clear; }
+
+        public static bool IsCapturing => _active != null;
+        public static void CancelCapture()
+        {
+            if (_active != null) { _active.EndCapture(); }
+        }
+
+        public RebindRow Build(RectTransform pane, string label, float width, float y, float height)
+        {
+            BuildBase(pane, label, width, y, height);
+
+            _fullBtnW = (PaneW - EdgePad) - ControlLeft;
+            _btnRt = Rect("Bind", Root);
+            _btnRt.Anchor(new Vector2(0f, 0.5f), new Vector2(0f, 0.5f), new Vector2(0f, 0.5f));
+            _btnRt.sizeDelta = new Vector2(_fullBtnW, 40f);
+            _btnRt.anchoredPosition = new Vector2(ControlLeft, 0f);
+            _btn = _btnRt.gameObject.AddComponent<Image>();
+            _btn.sprite = Rounded();
+            _btn.type = Image.Type.Sliced;
+            _btn.color = ControlBg;
+            _btn.raycastTarget = false;
+
+            _label = Text("Key", _btnRt, "", 18f, TextPrimary, TextAlignmentOptions.Center, FontStyles.Bold);
+            _label.overflowMode = TextOverflowModes.Ellipsis;
+            _label.rectTransform.Anchor(Vector2.zero, Vector2.one, new Vector2(0.5f, 0.5f));
+            _label.rectTransform.offsetMin = new Vector2(10f, 0f);
+            _label.rectTransform.offsetMax = new Vector2(-10f, 0f);
+
+            _capRow = Rect("CapControls", Root);
+            _capRow.Anchor(new Vector2(0f, 0.5f), new Vector2(0f, 0.5f), new Vector2(0f, 0.5f));
+            _capRow.sizeDelta = new Vector2(CapW, 36f);
+            _capRow.anchoredPosition = new Vector2(ControlLeft + _fullBtnW - CapW * 0.5f, 0f);
+            _capRow.pivot = new Vector2(0.5f, 0.5f);
+
+            _clearBtn = CapButton(_capRow, "Clear", new Vector2(0f, 0.5f), new Vector2(0f, 0.5f), new Vector2(0f, 0f), DangerDim);
+            _cancelBtn = CapButton(_capRow, "Cancel", new Vector2(1f, 0.5f), new Vector2(1f, 0.5f), new Vector2(0f, 0f), ControlBg);
+            _capRow.gameObject.SetActive(false);
+
+            RefreshLabel();
+            return this;
+        }
+
+        private void SetCapLayout(bool cap)
+        {
+            if (cap)
+            {
+                _btnRt.sizeDelta = new Vector2(Mathf.Max(120f, _fullBtnW - CapW - ColGap), 40f);
+                _capRow.gameObject.SetActive(true);
+            }
+            else
+            {
+                _btnRt.sizeDelta = new Vector2(_fullBtnW, 40f);
+                _capRow.gameObject.SetActive(false);
+            }
+        }
+
+        private static Image CapButton(RectTransform parent, string text, Vector2 aMin, Vector2 aMax, Vector2 pos, Color32 col)
+        {
+            var rt = Rect("Cap_" + text, parent);
+            rt.Anchor(aMin, aMax, new Vector2(aMin.x, 0.5f));
+            rt.sizeDelta = new Vector2(78f, 36f);
+            rt.anchoredPosition = pos;
+            var img = rt.gameObject.AddComponent<Image>();
+            img.sprite = Rounded(true);
+            img.type = Image.Type.Sliced;
+            img.color = col;
+            img.raycastTarget = false;
+            var t = Text("T", rt, text, 16f, TextBright, TextAlignmentOptions.Center, FontStyles.Bold);
+            t.rectTransform.Anchor(Vector2.zero, Vector2.one, new Vector2(0.5f, 0.5f));
+            t.rectTransform.offsetMin = Vector2.zero;
+            t.rectTransform.offsetMax = Vector2.zero;
+            return img;
+        }
+
+        private void RefreshLabel()
+        {
+            if (_capturing)
+            {
+                _label.text = _armed
+                    ? "<color=#22D3EE>Press any key...</color>"
+                    : "<color=#8C9CB2>Release to bind...</color>";
+                return;
+            }
+            _label.text = KeyName(_get());
+        }
+
+        private void EndCapture()
+        {
+            _capturing = false;
+            _armed = false;
+            if (_active == this) _active = null;
+            SetCapLayout(false);
+            RefreshLabel();
+        }
+
+        public override void OnMouseDown()
+        {
+            if (_capturing) return;
+            if (Contains(_btnRt))
+            {
+                if (_active != null && _active != this) _active.EndCapture();
+                _capturing = true;
+                _armed = false;
+                _active = this;
+                SetCapLayout(true);
+                RefreshLabel();
+            }
+        }
+
+        public override void Tick(float dt)
+        {
+            TickHover();
+            _btn.color = Lerp(_btn.color,
+                _capturing ? AccentFaint : (Contains(_btnRt) ? ControlHover : ControlBg), 0.25f);
+
+            if (!_capturing) return;
+
+            _clearBtn.color = Lerp(_clearBtn.color, Contains(_clearBtn.GetComponent<RectTransform>()) ? Danger : DangerDim, 0.25f);
+            _cancelBtn.color = Lerp(_cancelBtn.color, Contains(_cancelBtn.GetComponent<RectTransform>()) ? ControlHover : ControlBg, 0.25f);
+
+            if (!_armed)
+            {
+                if (Input.GetMouseButtonUp(0)) { _armed = true; RefreshLabel(); }
+                return;
+            }
+
+            if (Input.GetKeyDown(KeyCode.Escape)) { EndCapture(); return; }
+            if (Input.GetKeyDown(KeyCode.Delete) || Input.GetKeyDown(KeyCode.Backspace))
+            { _clear(); EndCapture(); return; }
+
+            for (int m = 0; m <= 6; m++)
+            {
+                if (!Input.GetMouseButtonDown(m)) continue;
+                if (Contains(_clearBtn.GetComponent<RectTransform>())) { _clear(); EndCapture(); return; }
+                if (Contains(_cancelBtn.GetComponent<RectTransform>())) { EndCapture(); return; }
+                _set(MouseToKey(m)); EndCapture(); return;
+            }
+
+            foreach (var kc in _keyCandidates)
+            {
+                if (kc == KeyCode.Escape || kc == KeyCode.Delete || kc == KeyCode.Backspace) continue;
+                if (Input.GetKeyDown(kc)) { _set(kc); EndCapture(); return; }
+            }
+        }
+
+        private static KeyCode MouseToKey(int m) => m switch
+        {
+            0 => KeyCode.Mouse0,
+            1 => KeyCode.Mouse1,
+            2 => KeyCode.Mouse2,
+            3 => KeyCode.Mouse3,
+            4 => KeyCode.Mouse4,
+            5 => KeyCode.Mouse5,
+            6 => KeyCode.Mouse6,
+            _ => KeyCode.None
+        };
+
+        private static string KeyName(KeyCode k)
+        {
+            if (k == KeyCode.None) return "<color=#607282>None</color>";
+            return k switch
+            {
+                KeyCode.Mouse0 => "MB1",
+                KeyCode.Mouse1 => "MB2",
+                KeyCode.Mouse2 => "MB3",
+                KeyCode.Mouse3 => "MB4",
+                KeyCode.Mouse4 => "MB5",
+                KeyCode.Mouse5 => "MB6",
+                KeyCode.Mouse6 => "MB7",
+                _ => k.ToString()
+            };
+        }
+
+        private static readonly KeyCode[] _keyCandidates = BuildKeyCandidates();
+        private static KeyCode[] BuildKeyCandidates()
+        {
+            var list = new List<KeyCode>();
+            foreach (var v in Enum.GetValues(typeof(KeyCode)))
+            {
+                var kc = (KeyCode)v;
+                if ((int)kc >= (int)KeyCode.Mouse0 && (int)kc <= (int)KeyCode.Mouse6) continue;
+                list.Add(kc);
+            }
+            return list.ToArray();
+        }
+    }
+}

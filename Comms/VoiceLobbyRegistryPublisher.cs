@@ -3,7 +3,6 @@ using System.Security.Cryptography;
 using System.Threading.Tasks;
 using AmongUs.GameOptions;
 using InnerNet;
-using MiraAPI.LocalSettings;
 
 namespace VoiceChatPlugin.VoiceChat;
 
@@ -33,7 +32,7 @@ internal static class VoiceLobbyRegistryPublisher
         if (now < _nextRefreshUtc) return;
         _nextRefreshUtc = now.AddSeconds(RefreshIntervalSeconds);
 
-        var settings = LocalSettingsTabSingleton<VoiceChatLocalSettings>.Instance;
+        var settings = VoiceSettings.Instance;
         var options = VoiceChatGameOptions.GetInstance();
         if (settings == null || !options.PublicVoiceLobby.Value || !TryBuildRequest(settings, out var request))
         {
@@ -81,7 +80,7 @@ internal static class VoiceLobbyRegistryPublisher
     {
         if (string.IsNullOrEmpty(_listingId) || string.IsNullOrEmpty(_ownerToken)) return;
 
-        var settings = LocalSettingsTabSingleton<VoiceChatLocalSettings>.Instance;
+        var settings = VoiceSettings.Instance;
         var registryUrl = settings?.LobbyRegistryUrl.Value ?? "";
         var id = _listingId;
         var token = _ownerToken;

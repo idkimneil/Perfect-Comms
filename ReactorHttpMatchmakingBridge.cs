@@ -1,7 +1,6 @@
 using System;
 using System.Reflection;
 using HarmonyLib;
-using Il2CppInterop.Runtime.InteropTypes;
 using UnityEngine;
 using VoiceChatPlugin.VoiceChat;
 using static UnityEngine.UI.Button;
@@ -17,23 +16,17 @@ internal static class GameStartManagerModdedRegionPatch
     {
         if (!ReactorHttpMatchmakingBridge.IsKnownModdedRegion()) return;
 
-        ReactorHttpMatchmakingBridge.MarkCurrentRegionModded();
         ReactorHttpMatchmakingBridge.RestorePublicToggle(__instance);
     }
 }
 
 internal static class ReactorHttpMatchmakingBridge
 {
-    private static readonly Type? SendWebRequestPatchType =
-        AccessTools.TypeByName("Reactor.Networking.Patches.HttpPatches+SendWebRequestPatch");
-    private static readonly FieldInfo? LastConnectionField =
-        AccessTools.Field(SendWebRequestPatchType, "<LastConnection>k__BackingField");
     private static readonly FieldInfo? HostPublicButtonField =
         AccessTools.Field(typeof(GameStartManager), "HostPublicButton");
     private static readonly FieldInfo? HostPrivateButtonField =
         AccessTools.Field(typeof(GameStartManager), "HostPrivateButton");
     private static string? _lastWarning;
-    private static bool _loggedBridge;
 
     internal static bool IsKnownModdedRegion()
     {
@@ -64,30 +57,6 @@ internal static class ReactorHttpMatchmakingBridge
         }
 
         return false;
-    }
-
-    internal static void MarkCurrentRegionModded()
-    {
-        try
-        {
-            if (LastConnectionField == null) return;
-            var currentRegion = DestroyableSingleton<ServerManager>.Instance?.CurrentRegion;
-            var region = currentRegion == null
-                ? null
-                : ((Il2CppObjectBase)currentRegion).TryCast<StaticHttpRegionInfo>();
-            if (region == null) return;
-
-            LastConnectionField.SetValue(null, (region, true));
-            if (!_loggedBridge)
-            {
-                _loggedBridge = true;
-                VoiceDiagnostics.DebugInfo("[VC] Marked known modded HTTP region as Reactor-compatible.");
-            }
-        }
-        catch (Exception ex)
-        {
-            WarnOnce($"Reactor region bridge failed: {ex.Message}");
-        }
     }
 
     internal static void RestorePublicToggle(GameStartManager manager)

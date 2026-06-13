@@ -2,7 +2,6 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Reflection;
-using MiraAPI.LocalSettings;
 using TMPro;
 using UnityEngine;
 using UnityEngine.Events;
@@ -102,7 +101,7 @@ public static class VoiceChatHudState
                 DestroyToast();
             });
 
-        var settings = LocalSettingsTabSingleton<VoiceChatLocalSettings>.Instance;
+        var settings = VoiceSettings.Instance;
         if (settings != null)
         {
             RefreshButtonLayout(settings);
@@ -114,7 +113,7 @@ public static class VoiceChatHudState
 
     internal static void RefreshButtonLayout()
     {
-        var settings = LocalSettingsTabSingleton<VoiceChatLocalSettings>.Instance;
+        var settings = VoiceSettings.Instance;
         if (settings == null) return;
         RefreshButtonLayout(settings);
     }
@@ -525,7 +524,7 @@ public static class VoiceChatHudState
     }
     internal static void ApplyMicState()
     {
-        var settings = LocalSettingsTabSingleton<VoiceChatLocalSettings>.Instance;
+        var settings = VoiceSettings.Instance;
         bool radioTransmit   = IsInTeamRadioMode();
         bool pushToTalkMode  = settings?.MicMode.Value == VoiceMicMode.PushToTalk;
         if (pushToTalkMode && _micMuted) _micMuted = false;
@@ -537,7 +536,7 @@ public static class VoiceChatHudState
 
     internal static void ApplySpeakerState()
     {
-        var tab = LocalSettingsTabSingleton<VoiceChatLocalSettings>.Instance;
+        var tab = VoiceSettings.Instance;
         VoiceChatRoom.Current?.SetMasterVolume(tab?.MasterVolume.Value ?? 1f);
     }
 
@@ -547,11 +546,11 @@ public static class VoiceChatHudState
     internal static void TrySyncHostRoomSettings() { }
 
     internal static bool IsPushToTalkMode()
-        => LocalSettingsTabSingleton<VoiceChatLocalSettings>.Instance?.MicMode.Value == VoiceMicMode.PushToTalk;
+        => VoiceSettings.Instance?.MicMode.Value == VoiceMicMode.PushToTalk;
 
     internal static void ToggleMicMode()
     {
-        var settings = LocalSettingsTabSingleton<VoiceChatLocalSettings>.Instance;
+        var settings = VoiceSettings.Instance;
         if (settings == null) return;
         var next = settings.MicMode.Value == VoiceMicMode.PushToTalk ? VoiceMicMode.OpenMic : VoiceMicMode.PushToTalk;
         settings.MicMode.Value = next;
@@ -798,7 +797,7 @@ public static class VoiceChatHudState
     {
         if (_micTooltip == null || _micTooltipTmp == null || _micButtonObj == null) return;
 
-        var tab = LocalSettingsTabSingleton<VoiceChatLocalSettings>.Instance;
+        var tab = VoiceSettings.Instance;
         bool pushToTalkMode = tab?.MicMode.Value == VoiceMicMode.PushToTalk;
         string status = TryGetLocalTransmitBlockReason(out string transmitBlockReason)
             ? transmitBlockReason
@@ -831,13 +830,13 @@ public static class VoiceChatHudState
         if (_spkTooltip == null || _spkTooltipTmp == null || _spkButtonObj == null) return;
 
         string status = _speakerMuted ? "Muted" : "Active";
-        var tab = LocalSettingsTabSingleton<VoiceChatLocalSettings>.Instance;
+        var tab = VoiceSettings.Instance;
         string hotkey = VoiceChatKeybinds.ToggleSpeaker.CurrentKey.ToString();
 
         _spkTooltipTmp.text =
             "<b>Speaker</b>\n" +
             $"Status: {status}\n" +
-            $"Volume: {(int)(tab.MasterVolume.Value * 100f)}%\n" +
+            $"Volume: {(int)((tab?.MasterVolume.Value ?? 0f) * 100f)}%\n" +
             $"Hotkey: {hotkey}";
 
         PositionNear(_spkTooltip, _spkButtonObj);

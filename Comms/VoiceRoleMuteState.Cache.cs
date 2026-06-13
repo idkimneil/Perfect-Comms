@@ -1,6 +1,5 @@
 using System;
 using HarmonyLib;
-using MiraAPI.Modifiers;
 using UnityEngine;
 
 namespace VoiceChatPlugin.VoiceChat;
@@ -111,12 +110,23 @@ internal static partial class VoiceRoleMuteState
             mediatingMediumId);
     }
 
-    private static BaseModifier? GetModifier(PlayerControl player, Type? type)
+    private static System.Reflection.MethodInfo? _getModifierMethod;
+    private static Type? _getModifierMethodOwner;
+
+    private static object? GetModifier(PlayerControl player, Type? type)
     {
         if (type == null) return null;
+        var extType = ResolveType("MiraAPI.Modifiers.ModifierExtensions");
+        if (extType == null) return null;
+        var method = ResolveGetModifierMethod(extType);
+        if (method == null) return null;
         try
         {
-            return player.GetModifier(type);
+            var ps = method.GetParameters();
+            var args = new object?[ps.Length];
+            args[0] = player;
+            args[1] = type;
+            return method.Invoke(null, args);
         }
         catch
         {
@@ -124,7 +134,32 @@ internal static partial class VoiceRoleMuteState
         }
     }
 
-    private static bool IsGlitchHackActive(BaseModifier? modifier)
+    private static System.Reflection.MethodInfo? ResolveGetModifierMethod(Type extType)
+    {
+        if (_getModifierMethod != null && _getModifierMethodOwner == extType)
+            return _getModifierMethod;
+        try
+        {
+            foreach (var m in extType.GetMethods(System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static))
+            {
+                if (m.Name != "GetModifier" || m.IsGenericMethodDefinition) continue;
+                var ps = m.GetParameters();
+                if (ps.Length >= 2 && ps[0].ParameterType == typeof(PlayerControl) && ps[1].ParameterType == typeof(Type))
+                {
+                    _getModifierMethod = m;
+                    _getModifierMethodOwner = extType;
+                    return m;
+                }
+            }
+        }
+        catch
+        {
+        }
+
+        return null;
+    }
+
+    private static bool IsGlitchHackActive(object? modifier)
     {
         if (modifier == null) return false;
         try
@@ -138,7 +173,7 @@ internal static partial class VoiceRoleMuteState
         }
     }
 
-    private static bool IsHypnotisedHysteriaActive(BaseModifier? modifier)
+    private static bool IsHypnotisedHysteriaActive(object? modifier)
     {
         if (modifier == null) return false;
         try
@@ -230,7 +265,7 @@ internal static partial class VoiceRoleMuteState
         }
     }
 
-    private static byte GetLoverPartnerId(BaseModifier? modifier)
+    private static byte GetLoverPartnerId(object? modifier)
     {
         if (modifier == null) return byte.MaxValue;
 
@@ -243,7 +278,7 @@ internal static partial class VoiceRoleMuteState
         return byte.MaxValue;
     }
 
-    private static bool TryGetLoverPartner(BaseModifier modifier, string memberName, bool useProperty, out PlayerControl partner)
+    private static bool TryGetLoverPartner(object modifier, string memberName, bool useProperty, out PlayerControl partner)
     {
         partner = null!;
         try
@@ -297,7 +332,7 @@ internal static partial class VoiceRoleMuteState
         return false;
     }
 
-    private static byte GetMediatingMediumId(BaseModifier? modifier)
+    private static byte GetMediatingMediumId(object? modifier)
     {
         if (modifier == null) return byte.MaxValue;
 

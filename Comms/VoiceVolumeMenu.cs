@@ -2,7 +2,6 @@ using System;
 using System.Collections.Generic;
 using System.Globalization;
 using HarmonyLib;
-using MiraAPI.LocalSettings;
 using TMPro;
 using UnityEngine;
 using UnityEngine.Events;
@@ -565,7 +564,7 @@ public static class VoiceVolumeMenu
     private static void EnsureSavedVolumesLoaded()
     {
         if (_savedVolumesLoaded) return;
-        var settings = LocalSettingsTabSingleton<VoiceChatLocalSettings>.Instance;
+        var settings = VoiceSettings.Instance;
         if (settings == null) return;
 
         _savedVolumesLoaded = true;
@@ -585,7 +584,7 @@ public static class VoiceVolumeMenu
 
     private static void PersistSavedVolumes()
     {
-        var settings = LocalSettingsTabSingleton<VoiceChatLocalSettings>.Instance;
+        var settings = VoiceSettings.Instance;
         if (settings == null) return;
 
         var parts = new List<string>();

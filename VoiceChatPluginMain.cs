@@ -7,12 +7,6 @@ using BepInEx.Logging;
 using BepInEx.Configuration;
 using BepInEx.Unity.IL2CPP;
 using HarmonyLib;
-using MiraAPI;
-using MiraAPI.PluginLoading;
-using Reactor;
-using Reactor.Networking;
-using Reactor.Networking.Attributes;
-using Reactor.Utilities;
 using UnityEngine;
 using UnityEngine.SceneManagement;
 using VoiceChatPlugin.VoiceChat;
@@ -21,17 +15,13 @@ namespace VoiceChatPlugin;
 
 [BepInPlugin(Id, "Perfect Comms", Version)]
 [BepInProcess("Among Us.exe")]
-[BepInDependency(ReactorPlugin.Id)]
-[BepInDependency(MiraApiPlugin.Id)]
-[ReactorModFlags(ModFlags.RequireOnAllClients)]
-public class VoiceChatPluginMain : BasePlugin, IMiraPlugin
+public class VoiceChatPluginMain : BasePlugin
 {
     public const string Id = "com.edgetel.perfectcomms";
     public const string Version = "2.1.7";
     public static ManualLogSource Logger { get; private set; } = null!;
+    internal static ConfigFile PluginConfig { get; private set; } = null!;
     public Harmony Harmony { get; } = new(Id);
-    public string OptionsTitleText => "Perfect Comms";
-    public ConfigFile GetConfigFile() => Config;
     private const string ResPrefix = "Lib.";
     private static readonly Dictionary<string, Assembly> _asmCache
         = new(StringComparer.OrdinalIgnoreCase);
@@ -73,9 +63,12 @@ public class VoiceChatPluginMain : BasePlugin, IMiraPlugin
     public override void Load()
     {
         Logger = Log;
+        PluginConfig = Config;
+        VoiceSettings.Instance = new VoiceChatLocalSettings(Config);
+        VoiceSettings.Instance.WireRuntimeHandlers();
+        VoiceChatKeybinds.Initialize(Config);
         VanillaLobbyDiagnostics.Configure(message => Logger.LogInfo(message), message => Logger.LogWarning(message));
         VoiceDiagnostics.DebugInfo("[VC] Loading Perfect Comms.");
-        ReactorCredits.Register("Perfect Comms", Version, false, ReactorCredits.AlwaysShow);
         VoiceDiagnostics.Init();
         if (VoiceDiagnostics.IsEnabled && !string.IsNullOrEmpty(VoiceDiagnostics.Path))
             VoiceDiagnostics.DebugInfo($"[VC] Diagnostics log: {VoiceDiagnostics.Path}");
@@ -83,10 +76,10 @@ public class VoiceChatPluginMain : BasePlugin, IMiraPlugin
         GameObject.DontDestroyOnLoad(ResidentObject);
         ResidentObject.hideFlags |= HideFlags.DontUnloadUnusedAsset | HideFlags.HideAndDontSave;
         VCManager.RegisterSceneHook();
+        VoiceUiDriver.Register();
         VoiceChatHudState.Init();
         VoiceChatPatches.RegisterKeybindHandlers();
         ApplyHarmonyPatchesResiliently();
-        DeviceLabelPatch.TryApply(Harmony); // reflection-resolved target; applied conditionally, never aborts
         VanillaLobbyPatchDiagnostics.LogPatchState(Harmony);
         VoiceDiagnostics.DebugInfo("[VC] Perfect Comms loaded.");
     }

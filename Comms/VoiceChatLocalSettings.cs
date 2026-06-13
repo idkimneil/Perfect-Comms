@@ -1,10 +1,6 @@
 using System;
 using System.Collections.Generic;
 using BepInEx.Configuration;
-using HarmonyLib;
-using MiraAPI.LocalSettings;
-using MiraAPI.LocalSettings.Attributes;
-using MiraAPI.Utilities.Assets;
 using UnityEngine;
 #if WINDOWS
 using NAudio.Wave;
@@ -73,27 +69,8 @@ public enum VoiceMouseBind
     MB5 = 2,
 }
 
-public class VoiceChatLocalSettings : LocalSettingsTab
+public class VoiceChatLocalSettings
 {
-    public static LoadableResourceAsset MicIcon { get; } = new("VoiceChatPlugin.Resources.miclogo.png");
-
-    public override string TabName => "Perfect Comms";
-    public override LocalSettingTabAppearance TabAppearance => new()
-    {
-        TabIcon              = MicIcon,
-        ToggleActiveColor    = new Color(0.40f, 0.78f, 0.56f),
-        ToggleInactiveColor  = new Color(0.74f, 0.40f, 0.42f),
-        ToggleHoverColor     = new Color(0.56f, 0.88f, 0.70f),
-        SliderColor          = new Color(0.46f, 0.74f, 0.92f),
-        SliderHoverColor     = new Color(0.64f, 0.86f, 0.98f),
-        EnumColor            = new Color(0.82f, 0.85f, 0.90f),
-        EnumHoverColor       = new Color(0.64f, 0.86f, 0.98f),
-        NumberColor          = new Color(0.82f, 0.85f, 0.90f),
-        NumberHoverColor     = new Color(0.64f, 0.86f, 0.98f),
-        TabButtonActiveColor = new Color(0.46f, 0.74f, 0.92f),
-        TabButtonHoverColor  = new Color(0.64f, 0.86f, 0.98f),
-    };
-
     private static string[] _micDeviceNames = Array.Empty<string>();
 #if WINDOWS
     private static string[] _spkDeviceNames = Array.Empty<string>();
@@ -105,111 +82,43 @@ public class VoiceChatLocalSettings : LocalSettingsTab
 #endif
 
     // ── Settings ──────────────────────────────────────────────────────────────
-    [LocalSliderSetting("Mic Volume", min: 0.1f, max: 2f,
-        displayValue: true, formatString: "0.00")]
     public ConfigEntry<float> MicVolume { get; }
-
-    [LocalSliderSetting("Mic Sensitivity", min: 0.25f, max: 2f,
-        displayValue: true, formatString: "0.00")]
     public ConfigEntry<float> MicSensitivity { get; }
-
-    [LocalSliderSetting("Speaker Volume", min: 0.1f, max: 2f,
-        displayValue: true, formatString: "0.00")]
     public ConfigEntry<float> MasterVolume { get; }
-
-    [LocalSliderSetting("Voice Falloff", min: 0f, max: 1f,
-        displayValue: true, formatString: "0%")]
     public ConfigEntry<float> VoiceFalloffSoftness { get; }
-
-    [LocalEnumSetting("Mic Mode")]
     public ConfigEntry<VoiceMicMode> MicMode { get; }
-
-    [LocalToggleSetting("Noise Suppression")]
     public ConfigEntry<bool> NoiseSuppressionEnabled { get; }
-
-    [LocalToggleSetting("Auto Mic Gain")]
     public ConfigEntry<bool> AutoMicGain { get; }
-
-    [LocalToggleSetting("Start Muted")]
     public ConfigEntry<bool> StartMuted { get; }
-
-    [LocalToggleSetting("Start Deafened")]
     public ConfigEntry<bool> StartDeafened { get; }
-
-    [LocalEnumSetting("Mic Device")]
     public ConfigEntry<MicDeviceEnum> MicrophoneDeviceIndex { get; }
-
 #if WINDOWS
-    [LocalEnumSetting("Speaker Device")]
     public ConfigEntry<SpkDeviceEnum> SpeakerDeviceIndex { get; }
 #endif
-
-    [LocalEnumSetting("Mute Bind")]
     public ConfigEntry<VoiceMouseBind> MuteMouseBind { get; }
-
-    [LocalEnumSetting("Speaker Bind")]
     public ConfigEntry<VoiceMouseBind> SpeakerMouseBind { get; }
-
-    [LocalEnumSetting("Push-To-Talk")]
     public ConfigEntry<VoiceMouseBind> PushToTalkMouseBind { get; }
-
-    [LocalEnumSetting("Team Radio")]
     public ConfigEntry<VoiceMouseBind> ImpostorRadioMouseBind { get; }
-
-    [LocalSliderSetting("Controls X", min: 0f, max: 1f,
-        displayValue: true, formatString: "0.00")]
     public ConfigEntry<float> ButtonPositionX { get; }
-
-    [LocalSliderSetting("Controls Y", min: 0f, max: 1f,
-        displayValue: true, formatString: "0.00")]
     public ConfigEntry<float> ButtonPositionY { get; }
-
-    [LocalEnumSetting("Controls Layout")]
     public ConfigEntry<VoiceControlsLayout> VoiceControlsLayout { get; }
-
-    [LocalEnumSetting("Bar Position")]
     public ConfigEntry<SpeakingBarPosition> SpeakingBarPosition { get; }
-
-    [LocalEnumSetting("Bar Layout")]
     public ConfigEntry<VoiceControlsLayout> SpeakingBarLayout { get; }
-
-    [LocalEnumSetting("Bar Name Pos")]
     public ConfigEntry<SpeakingBarNamePosition> SpeakingBarNamePosition { get; }
-
-    [LocalToggleSetting("Manual Bar")]
     public ConfigEntry<bool> SpeakingBarManualLayout { get; }
-
-    [LocalToggleSetting("Bar Backdrop")]
     public ConfigEntry<bool> SpeakingBarBackdrop { get; }
-
-    [LocalToggleSetting("Meeting Overlay")]
     public ConfigEntry<bool> MeetingSpeakingOverlay { get; }
-
-    [LocalEnumSetting("Jail Unmute")]
     public ConfigEntry<JailUnmuteButtonPlacement> JailUnmuteButtonPlacement { get; }
-
-    [LocalSliderSetting("Bar X", min: 0f, max: 1f,
-        displayValue: true, formatString: "0.00")]
     public ConfigEntry<float> SpeakingBarX { get; }
-
-    [LocalSliderSetting("Bar Y", min: 0f, max: 1f,
-        displayValue: true, formatString: "0.00")]
     public ConfigEntry<float> SpeakingBarY { get; }
-
-    [LocalSliderSetting("Overlay Scale", min: 0.75f, max: 3.00f,
-        displayValue: true, formatString: "0.00")]
     public ConfigEntry<float> OverlayScale { get; }
 
     // User-facing toggle (default on). When on, the BetterCrewLink backend offers a TURN relay alongside
     // STUN so peers that can't establish a direct connection (strict/symmetric NAT, firewalls) still get
     // audio. Only the peers that actually need it relay; everyone else stays direct. BCL backend only.
-    [LocalToggleSetting("Nat Fix")]
     public ConfigEntry<bool> NatFix { get; }
 
-    [LocalToggleSetting("Debug Voice Stats")]
     public ConfigEntry<bool> DebugVoiceStats { get; }
-
-    [LocalToggleSetting("Mic Calibration Logs")]
     public ConfigEntry<bool> MicCalibrationDiagnostics { get; }
 
     public ConfigEntry<float> NoiseGateThreshold { get; }
@@ -232,6 +141,7 @@ public class VoiceChatLocalSettings : LocalSettingsTab
     public ConfigEntry<bool> UpdateNotificationsEnabled { get; }
     public ConfigEntry<string> UpdateNotificationUrl { get; }
 
+    private readonly ConfigFile _config;
     private readonly ConfigEntry<string> _savedMicDeviceName;
 #if WINDOWS
     private readonly ConfigEntry<string> _savedSpkDeviceName;
@@ -259,8 +169,9 @@ public class VoiceChatLocalSettings : LocalSettingsTab
     }
 #endif
 
-    public VoiceChatLocalSettings(ConfigFile config) : base(config)
+    public VoiceChatLocalSettings(ConfigFile config)
     {
+        _config = config;
         RefreshDeviceLists();
 
         MicVolume = config.Bind("Audio", "MicVolume", 1f,
@@ -493,6 +404,21 @@ public class VoiceChatLocalSettings : LocalSettingsTab
         VoiceDiagnostics.SetEnabled(DebugVoiceStats.Value);
     }
 
+    // Subscribe AFTER construction (so the ctor's own initial .Value assignments don't dispatch). A single
+    // global ConfigFile.SettingChanged subscription routes every value change (from the in-game panel OR a
+    // config-file edit) into the same runtime-apply dispatch that MiraAPI used to drive.
+    public void WireRuntimeHandlers()
+    {
+        _config.SettingChanged += (_, args) =>
+        {
+            if (args is SettingChangedEventArgs changed)
+            {
+                try { Dispatch(changed.ChangedSetting); }
+                catch (Exception ex) { VoiceDiagnostics.DebugWarning($"[VC] Setting dispatch failed: {ex.Message}"); }
+            }
+        };
+    }
+
     private static T ResolveDeviceIndex<T>(string savedName, string[] names, T fallback)
         where T : struct, Enum
     {
@@ -561,7 +487,19 @@ public class VoiceChatLocalSettings : LocalSettingsTab
 #endif
     }
 
-    public override void OnOptionChanged(ConfigEntryBase configEntry)
+    private static DateTime _nextDeviceRefreshUtc = DateTime.MinValue;
+
+    // Re-enumerate devices (throttled to every 2s) so hot-plugged or removed mics/speakers show up in the
+    // in-game device pickers without a game restart. Called from the settings panel's device rows.
+    public static void MaybeRefreshDeviceLists()
+    {
+        var now = DateTime.UtcNow;
+        if (now < _nextDeviceRefreshUtc) return;
+        _nextDeviceRefreshUtc = now.AddSeconds(2);
+        RefreshDeviceLists();
+    }
+
+    internal void Dispatch(ConfigEntryBase configEntry)
     {
         if (configEntry == MicVolume)
         {
@@ -661,150 +599,5 @@ public class VoiceChatLocalSettings : LocalSettingsTab
         {
             entry.Value = VoiceMouseBind.Off;
         }
-    }
-}
-
-// No [HarmonyPatch]: target is resolved by reflection and may be absent on a mismatched MiraAPI
-// version, which would make auto-discovery throw "Undefined target method". Applied manually from Load().
-public static class DeviceLabelPatch
-{
-    internal static void TryApply(Harmony harmony)
-    {
-        var target = TargetMethod();
-        if (target == null) return; // TargetMethod already logged the reason
-
-        try
-        {
-            harmony.Patch(target, postfix: new HarmonyMethod(typeof(DeviceLabelPatch), nameof(Postfix)));
-            VoiceDiagnostics.DebugInfo("[VC] DeviceLabelPatch applied.");
-        }
-        catch (Exception ex)
-        {
-            VoiceDiagnostics.DebugWarning($"[VC] DeviceLabelPatch failed to apply: {ex.Message}");
-        }
-    }
-
-    static System.Reflection.MethodBase? TargetMethod()
-    {
-        foreach (var asm in AppDomain.CurrentDomain.GetAssemblies())
-        {
-            var t = asm.GetType("MiraAPI.LocalSettings.SettingTypes.LocalEnumSetting");
-            if (t == null) continue;
-
-            foreach (string name in new[]
-            {
-                "GetValueString", "GetDisplayString", "GetCurrentValueText",
-                "GetValue",       "GetLabel",         "GetCurrentValue",
-                "ValueToString",  "GetOptionString"
-            })
-            {
-                var m = t.GetMethod(name,
-                    System.Reflection.BindingFlags.Public |
-                    System.Reflection.BindingFlags.NonPublic |
-                    System.Reflection.BindingFlags.Instance);
-                if (m != null && m.ReturnType == typeof(string))
-                {
-                    VoiceDiagnostics.DebugInfo(
-                        $"[VC] DeviceLabelPatch targeting {t.Name}.{name}");
-                    return m;
-                }
-            }
-
-            foreach (var m in t.GetMethods(
-                System.Reflection.BindingFlags.Public |
-                System.Reflection.BindingFlags.NonPublic |
-                System.Reflection.BindingFlags.Instance |
-                System.Reflection.BindingFlags.DeclaredOnly))
-            {
-                if (m.ReturnType == typeof(string) && m.GetParameters().Length == 0)
-                {
-                    VoiceDiagnostics.DebugInfo(
-                        $"[VC] DeviceLabelPatch fallback targeting {t.Name}.{m.Name}");
-                    return m;
-                }
-            }
-        }
-
-        VoiceDiagnostics.DebugWarning(
-            "[VC] DeviceLabelPatch: could not find LocalEnumSetting display method.");
-        return null;
-    }
-
-    private static DateTime _nextDeviceRefreshUtc = DateTime.MinValue;
-
-    private static void MaybeRefreshDeviceLists()
-    {
-        var now = DateTime.UtcNow;
-        if (now < _nextDeviceRefreshUtc) return;
-        _nextDeviceRefreshUtc = now.AddSeconds(2);
-        VoiceChatLocalSettings.RefreshDeviceLists();
-    }
-
-    static void Postfix(object __instance, ref string __result)
-    {
-        try
-        {
-            ConfigEntryBase? entry = null;
-            var t = __instance.GetType();
-
-            foreach (string fname in new[] { "_configEntry", "ConfigEntry", "Entry", "_entry" })
-            {
-                var fi = t.GetField(fname,
-                    System.Reflection.BindingFlags.Public |
-                    System.Reflection.BindingFlags.NonPublic |
-                    System.Reflection.BindingFlags.Instance);
-                if (fi?.GetValue(__instance) is ConfigEntryBase e) { entry = e; break; }
-            }
-
-            if (entry == null)
-            {
-                foreach (var pi in t.GetProperties(
-                    System.Reflection.BindingFlags.Public |
-                    System.Reflection.BindingFlags.NonPublic |
-                    System.Reflection.BindingFlags.Instance))
-                {
-                    if (typeof(ConfigEntryBase).IsAssignableFrom(pi.PropertyType))
-                    {
-                        entry = pi.GetValue(__instance) as ConfigEntryBase;
-                        if (entry != null) break;
-                    }
-                }
-            }
-
-            if (entry == null) return;
-
-            int idx = Convert.ToInt32(entry.BoxedValue);
-
-            bool isMic = entry.SettingType == typeof(MicDeviceEnum);
-#if WINDOWS
-            bool isSpk = entry.SettingType == typeof(SpkDeviceEnum);
-#else
-            const bool isSpk = false;
-#endif
-            // Re-enumerate devices (throttled) whenever a device dropdown is rendered so hot-plugged
-            // or removed mics/speakers are reflected without a game restart.
-            if (isMic || isSpk)
-                MaybeRefreshDeviceLists();
-
-            if (isMic)
-            {
-                var names = VoiceChatLocalSettings.MicDeviceNames;
-                var dev = idx == 0           ? "Default"
-                        : idx < names.Length ? names[idx]
-                        : "Default";
-                __result = $"<font=\"LiberationSans SDF\" material=\"LiberationSans SDF - Chat Message Masked\">Mic Device: <b>{dev}</font></b>";
-            }
-#if WINDOWS
-            else if (isSpk)
-            {
-                var names = VoiceChatLocalSettings.SpkDeviceNames;
-                var dev = idx == 0           ? "Default"
-                        : idx < names.Length ? names[idx]
-                        : "Default";
-                __result = $"<font=\"LiberationSans SDF\" material=\"LiberationSans SDF - Chat Message Masked\">Speaker Device: <b>{dev}</font></b>";
-            }
-#endif
-        }
-        catch {}
     }
 }
