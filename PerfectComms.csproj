@@ -91,6 +91,12 @@
 		<EmbeddedResource Include="Libs\rnnoise.x86.dll">
 			<LogicalName>Lib.rnnoise.x86.dll</LogicalName>
 		</EmbeddedResource>
+		<EmbeddedResource Include="Libs\speexdsp.x64.dll">
+			<LogicalName>Lib.speexdsp.x64.dll</LogicalName>
+		</EmbeddedResource>
+		<EmbeddedResource Include="Libs\speexdsp.x86.dll">
+			<LogicalName>Lib.speexdsp.x86.dll</LogicalName>
+		</EmbeddedResource>
 		<EmbeddedResource Include="$(NuGetPackageRoot)sipsorcery\10.0.6\lib\net6.0\SIPSorcery.dll">
 			<LogicalName>Lib.SIPSorcery.dll</LogicalName>
 		</EmbeddedResource>

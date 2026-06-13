@@ -48,6 +48,11 @@ internal sealed class MicPreprocessor : IDisposable
     private float _hpfLastInput;
     private float _hpfLastOutput;
     private RnNoiseSuppressor? _noiseSuppressor;
+    private SpeexEchoCanceller? _echoCanceller;
+    private bool _echoCancellationEnabled = true;
+    private bool _echoCancellationUnavailable;
+    private string _echoCancellationState = "enabled-waiting-for-audio";
+    private string _echoCancellationLastError = "none";
     private string _noiseSuppressionState = "disabled";
     private string _noiseSuppressionLastError = "none";
     private string _noiseSuppressionNativePath = string.Empty;
@@ -70,6 +75,7 @@ internal sealed class MicPreprocessor : IDisposable
         _hpfLastInput = 0f;
         _hpfLastOutput = 0f;
         _noiseSuppressor?.Reset();
+        _echoCanceller?.Reset();
     }
 
     public void ResetAutoGain()
@@ -267,6 +273,70 @@ internal sealed class MicPreprocessor : IDisposable
     {
         _noiseSuppressor?.Dispose();
         _noiseSuppressor = null;
+        _echoCanceller?.Dispose();
+        _echoCanceller = null;
+    }
+
+    public void SetEchoCancellationEnabled(bool enabled)
+    {
+        _echoCancellationEnabled = enabled;
+        if (!enabled)
+        {
+            _echoCanceller?.Dispose();
+            _echoCanceller = null;
+            SetEchoCancellationState("disabled", "none");
+        }
+    }
+
+    public void ResetEchoCancellation() => _echoCanceller?.Reset();
+
+    // Cancels far-end echo (the played reference bleeding into the mic) in place, before AGC so the echo path
+    // the adaptive filter models stays linear. Lazily creates the native canceller on the first frame and
+    // stops retrying once the native library is confirmed unavailable, so a missing DLL is a silent no-op.
+    public bool ApplyEchoCancellation(float[] mic, float[] reference, int sampleCount)
+    {
+        if (!_echoCancellationEnabled) return false;
+        var count = Math.Min(sampleCount, Math.Min(mic.Length, reference.Length));
+        if (count <= 0) return false;
+
+        if (_echoCanceller == null)
+        {
+            if (_echoCancellationUnavailable) return false;
+            if (!SpeexEchoCanceller.TryCreate(AudioHelpers.FrameSize, out var canceller, out var error))
+            {
+                _echoCancellationUnavailable = true;
+                SetEchoCancellationState("unavailable", error);
+                return false;
+            }
+
+            _echoCanceller = canceller;
+            SetEchoCancellationState("ready", "none");
+        }
+
+        var active = _echoCanceller;
+        if (active == null) return false;
+
+        try
+        {
+            return active.TryCancelInPlace(mic, reference, count);
+        }
+        catch (Exception ex)
+        {
+            SetEchoCancellationState("process-error", ex.Message);
+            active.Dispose();
+            _echoCanceller = null;
+            _echoCancellationUnavailable = true;
+            return false;
+        }
+    }
+
+    private void SetEchoCancellationState(string state, string error)
+    {
+        var safeError = string.IsNullOrWhiteSpace(error) ? "none" : SanitizeLogValue(error);
+        if (_echoCancellationState == state && _echoCancellationLastError == safeError) return;
+        _echoCancellationState = state;
+        _echoCancellationLastError = safeError;
+        VoiceDiagnostics.Log("bcl.aec", $"state={state} error=\"{safeError}\" nativePath=\"{SanitizeLogValue(_echoCanceller?.NativePath)}\"");
     }
 
     public float LimitFramePeakForEncode(float[] pcm, int sampleCount)

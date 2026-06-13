@@ -144,6 +144,10 @@ internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
     private double _txSquareSumSinceStats;
     private int _txSamplesSinceStats;
     private readonly float[] _captureFrameBuffer = new float[AudioHelpers.FrameSize];
+    private readonly float[] _referenceFrame = new float[AudioHelpers.FrameSize];
+    // Far-end reference shared with the playback provider: ~500ms ring, occupancy capped at ~200ms so the
+    // echo-canceller's reference delay can't drift unbounded relative to capture.
+    private readonly FarEndReference _farEndReference = new(AudioHelpers.ClockRate / 2, AudioHelpers.ClockRate / 5);
     private int _captureFrameSamples;
     // Bumped under _captureFrameSync on every capture stop/restart. A WaveInEvent callback that was already
     // dispatched before teardown snapshots the epoch on entry and is dropped once it acquires the lock, so a
@@ -260,7 +264,7 @@ internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
             AudioHelpers.PlaybackPrebufferSamples * 3,
             enableRecoveryPrebuffer: true,
             instancePrebufferSamples: AudioHelpers.PlaybackRecoveryPrebufferSamples);
-        _playbackProvider = new BclStereoPlaybackProvider(_leftPlayback.Endpoint, _rightPlayback.Endpoint);
+        _playbackProvider = new BclStereoPlaybackProvider(_leftPlayback.Endpoint, _rightPlayback.Endpoint, _farEndReference);
 
         ConnectSocket();
         WarmOpusCodec();
@@ -664,6 +668,11 @@ internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
             }
 
             _microphoneReady = true;
+            // Start capturing the playback reference (and drop any stale adaptation) only for a real mic; the
+            // synthetic tone is never echo-cancelled.
+            _farEndReference.Reset();
+            _farEndReference.Enabled = !_captureOptions.SyntheticMicToneEnabled;
+            _micPreprocessor.ResetEchoCancellation();
             Interlocked.Exchange(ref _speakerTopologyFastUntilTicks, (DateTime.UtcNow + SpeakerTopologyFastWindow).Ticks);
             VoiceDiagnostics.Log("bcl.mic", $"ready=true reason={reason} capture={captureKind} device=\"{_lastMicDeviceName}\" captureDevice=\"{captureDevice}\" captureFormat=\"{DescribeWaveFormat(_waveIn?.WaveFormat)}\" waveInDevice={waveInDevice} defaultWaveIn=\"{DescribeDefaultWaveInDevice()}\" waveInDevices=\"{DescribeWaveInDevices()}\" syntheticTone={_captureOptions.SyntheticMicToneEnabled} volume={_micVolume:0.00}");
         }
@@ -677,6 +686,7 @@ internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
     private void StopMicrophone(string reason)
     {
         StopSyntheticMicTone();
+        _farEndReference.Enabled = false;
         var waveIn = _waveIn;
         var hadMic = waveIn != null || _microphoneReady;
         _waveIn = null;
@@ -963,6 +973,8 @@ internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
             _waveOut.PlaybackStopped += OnPlaybackStopped;
             _waveOut.Init(_playbackProvider.ToWaveProvider());
             _waveOut.Play();
+            // Drop stale far-end reference buffered against a previous output device/format.
+            _farEndReference.Reset();
             _speakerReady = _waveOut.PlaybackState == PlaybackState.Playing;
             _openedSpeakerDeviceNumber = outputDevice;
             _openedSpeakerProductName = DescribeWaveOutDevice(outputDevice);
@@ -3088,6 +3100,11 @@ internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
 
         if (!IsSyntheticSource(source))
             _micPreprocessor.ApplyHighPass(floatPcm, samples);
+
+        // Acoustic echo cancellation: subtract the played far-end signal that bleeds back into the mic, before
+        // AGC so the echo path the adaptive filter models stays linear. Skips when the reference FIFO is short.
+        if (!IsSyntheticSource(source) && _farEndReference.TryReadAligned(_referenceFrame, samples))
+            _micPreprocessor.ApplyEchoCancellation(floatPcm, _referenceFrame, samples);
 
         var rawCapturePeak = AudioHelpers.MeasurePeak(floatPcm, samples);
         var agcGain = _micPreprocessor.ApplyAutoGain(floatPcm, samples, _autoMicGain && !IsSyntheticSource(source), out var preSuppressionPeak);

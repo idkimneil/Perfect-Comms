@@ -157,15 +157,17 @@ internal sealed class BclStereoPlaybackProvider : ISampleProvider
     private const float FullPanFarSideGain = 0.25f;
     private readonly ISampleProvider _left;
     private readonly ISampleProvider _right;
+    private readonly FarEndReference? _farEndReference;
     private float[] _leftBuffer = Array.Empty<float>();
     private float[] _rightBuffer = Array.Empty<float>();
 
-    public BclStereoPlaybackProvider(ISampleProvider left, ISampleProvider right)
+    public BclStereoPlaybackProvider(ISampleProvider left, ISampleProvider right, FarEndReference? farEndReference = null)
     {
         if (left.WaveFormat.Channels != 1 || right.WaveFormat.Channels != 1)
             throw new ArgumentException("BCL stereo playback provider requires mono source graphs.");
         _left = left;
         _right = right;
+        _farEndReference = farEndReference;
     }
 
     public WaveFormat WaveFormat { get; } = WaveFormat.CreateIeeeFloatWaveFormat(AudioHelpers.ClockRate, 2);
@@ -206,6 +208,9 @@ internal sealed class BclStereoPlaybackProvider : ISampleProvider
             buffer[offset + frame * 2] = frame < leftRead ? _leftBuffer[frame] : 0f;
             buffer[offset + frame * 2 + 1] = frame < rightRead ? _rightBuffer[frame] : 0f;
         }
+
+        // Capture exactly what the speaker plays as the echo-cancellation far-end reference (mono downmix).
+        _farEndReference?.WriteStereoDownmix(_leftBuffer, leftRead, _rightBuffer, rightRead, frames);
 
         if ((count & 1) != 0)
             buffer[offset + count - 1] = 0f;
