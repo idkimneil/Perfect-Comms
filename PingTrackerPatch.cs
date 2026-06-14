@@ -714,8 +714,33 @@ public static class PingTrackerPatch
         _barRoot.transform.position += delta;
     }
 
-    // Viewport-space bounding box of every slot's icon/ring/label, padded by the per-icon
-    // footprint. Shared by auto-fit (needs the size) and clamp (needs min/max to shift).
+    private static readonly List<Renderer> _slotBoundsScratch = new();
+
+    private static Renderer[] GetSlotBoundsRenderers(SpeakerSlot slot)
+    {
+        if (slot.BoundsRenderers != null && ReferenceEquals(slot.BoundsRenderersFor, slot.IconGO))
+            return slot.BoundsRenderers;
+
+        _slotBoundsScratch.Clear();
+        if (slot.IconGO != null)
+            foreach (var r in slot.IconGO.GetComponentsInChildren<Renderer>(true))
+                if (r != null) _slotBoundsScratch.Add(r);
+        if (slot.RingGO != null)
+        {
+            var rr = slot.RingGO.GetComponent<Renderer>();
+            if (rr != null) _slotBoundsScratch.Add(rr);
+        }
+        if (slot.LabelTMP != null)
+        {
+            var lr = slot.LabelTMP.GetComponent<Renderer>();
+            if (lr != null) _slotBoundsScratch.Add(lr);
+        }
+
+        slot.BoundsRenderers = _slotBoundsScratch.ToArray();
+        slot.BoundsRenderersFor = slot.IconGO;
+        return slot.BoundsRenderers;
+    }
+
     private static bool TryComputeSlotViewportBounds(Camera cam,
         out float minX, out float maxX, out float minY, out float maxY)
     {
@@ -726,36 +751,32 @@ public static class PingTrackerPatch
         var depthWorld = cam.ViewportToWorldPoint(new Vector3(0f, 0f, ManualViewportDepth));
         float depthZ = depthWorld.z;
 
-        // Per-element footprint half-extent, world → viewport.
-        var originVp = cam.WorldToViewportPoint(new Vector3(0f, 0f, depthZ));
-        var footVp   = cam.WorldToViewportPoint(new Vector3(SlotFootprintHalfWorld, SlotFootprintHalfWorld, depthZ));
-        float padX = Mathf.Abs(footVp.x - originVp.x);
-        float padY = Mathf.Abs(footVp.y - originVp.y);
-
         bool any = false;
         foreach (var kv in _slots)
         {
-            var slot = kv.Value;
-            AccumulateSlotBounds(slot.IconGO, cam, depthZ, padX, padY, ref minX, ref maxX, ref minY, ref maxY, ref any);
-            AccumulateSlotBounds(slot.RingGO, cam, depthZ, padX, padY, ref minX, ref maxX, ref minY, ref maxY, ref any);
-            if (slot.LabelTMP != null)
-                AccumulateSlotBounds(slot.LabelTMP.gameObject, cam, depthZ, padX, padY,
-                    ref minX, ref maxX, ref minY, ref maxY, ref any);
+            var rends = GetSlotBoundsRenderers(kv.Value);
+            for (int i = 0; i < rends.Length; i++)
+            {
+                var r = rends[i];
+                if (r == null || !r.enabled || !r.gameObject.activeInHierarchy) continue;
+                var b = r.bounds;
+                AccumulateViewportPoint(cam, b.min.x, b.min.y, depthZ, ref minX, ref maxX, ref minY, ref maxY, ref any);
+                AccumulateViewportPoint(cam, b.max.x, b.min.y, depthZ, ref minX, ref maxX, ref minY, ref maxY, ref any);
+                AccumulateViewportPoint(cam, b.min.x, b.max.y, depthZ, ref minX, ref maxX, ref minY, ref maxY, ref any);
+                AccumulateViewportPoint(cam, b.max.x, b.max.y, depthZ, ref minX, ref maxX, ref minY, ref maxY, ref any);
+            }
         }
         return any;
     }
 
-    private static void AccumulateSlotBounds(GameObject? go, Camera cam, float depthZ,
-        float padX, float padY,
+    private static void AccumulateViewportPoint(Camera cam, float wx, float wy, float depthZ,
         ref float minX, ref float maxX, ref float minY, ref float maxY, ref bool any)
     {
-        if (go == null) return;
-        var w  = go.transform.position;
-        var vp = cam.WorldToViewportPoint(new Vector3(w.x, w.y, depthZ));
-        minX = Mathf.Min(minX, vp.x - padX);
-        maxX = Mathf.Max(maxX, vp.x + padX);
-        minY = Mathf.Min(minY, vp.y - padY);
-        maxY = Mathf.Max(maxY, vp.y + padY);
+        var vp = cam.WorldToViewportPoint(new Vector3(wx, wy, depthZ));
+        minX = Mathf.Min(minX, vp.x);
+        maxX = Mathf.Max(maxX, vp.x);
+        minY = Mathf.Min(minY, vp.y);
+        maxY = Mathf.Max(maxY, vp.y);
         any = true;
     }
 
@@ -1555,5 +1576,7 @@ public static class PingTrackerPatch
         public int               VanillaStyleVersion;
         public float             AppliedGhostAlpha;
         public GameObject?       GhostAlphaIcon;
+        public Renderer[]?       BoundsRenderers;
+        public GameObject?       BoundsRenderersFor;
     }
 }
