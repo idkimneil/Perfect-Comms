@@ -467,6 +467,8 @@ public static class PingTrackerPatch
                 AddSlot(id, level);
             }
 
+            if (_slots.Count > 0 && !_barRoot.activeSelf) _barRoot.SetActive(true);
+
             UpdateSlotRings();
 
             if (fixedActive)
@@ -743,13 +745,6 @@ public static class PingTrackerPatch
             {
                 var p = core.position;
                 AccumulateBox(cam, p.x, p.y, coreHalf, coreHalf, depthZ, ref minX, ref maxX, ref minY, ref maxY, ref any);
-            }
-            if (slot.LabelTMP != null && slot.LabelWidth > 0.0001f && slot.LabelHeight > 0.0001f)
-            {
-                var lp = slot.LabelTMP.transform.position;
-                float lhw = slot.LabelWidth * 0.5f * rootScale;
-                float lhh = slot.LabelHeight * 0.5f * rootScale;
-                AccumulateBox(cam, lp.x, lp.y, lhw, lhh, depthZ, ref minX, ref maxX, ref minY, ref maxY, ref any);
             }
         }
         return any;
@@ -1131,24 +1126,14 @@ public static class PingTrackerPatch
         _layoutDirty = false;
         if (_layoutVertical)
         {
-            float totalH = _slots.Count * SlotHeight;
-            float startY = totalH * 0.5f - SlotHeight * 0.5f;
-            // Names ABOVE icons need extra pitch so an above-name can't touch the slot above it; other
-            // positions keep the historic SlotHeight pitch (pinned y line below stays the actual placement).
             bool topNames = _namePosition == SpeakingBarNamePosition.Top;
             float pitch = topNames ? SlotHeight + TopNameExtraPitch : SlotHeight;
-            if (topNames)
-            {
-                totalH = _slots.Count * pitch;
-                startY = totalH * 0.5f - pitch * 0.5f;
-            }
             float cMinX = 0f, cMaxX = 0f, cMinY = 0f, cMaxY = 0f;
             int i = 0;
             foreach (var id in _slotOrder)
             {
                 if (!_slots.TryGetValue(id, out var slot)) continue;
-                float y = _layoutAnchoredBottom ? i * SlotHeight + BottomNameLift : startY - i * SlotHeight;
-                if (topNames) y = _layoutAnchoredBottom ? i * pitch + BottomNameLift : startY - i * pitch;
+                float y = _layoutAnchoredBottom ? i * pitch + BottomNameLift : -i * pitch;
                 float labelY = y - LabelOffset;
                 if (slot.IconGO   != null)
                     slot.IconGO.transform.localPosition  = new Vector3(0f, y, -100f);
@@ -1175,8 +1160,6 @@ public static class PingTrackerPatch
             foreach (var id in _slotOrder)
                 if (_slots.TryGetValue(id, out var s))
                     slotPitch = Mathf.Max(slotPitch, RequiredSlotPitch(s));
-            float totalW = _slots.Count * slotPitch;
-            float startX = -totalW * 0.5f + slotPitch * 0.5f;
             float iconY = _layoutAnchoredBottom ? BottomNameLift : 0f;
             float labelY = _layoutAnchoredBottom ? BottomNameLift - LabelOffset : -LabelOffset;
             float cMinX = 0f, cMaxX = 0f, cMinY = 0f, cMaxY = 0f;
@@ -1184,7 +1167,7 @@ public static class PingTrackerPatch
             foreach (var id in _slotOrder)
             {
                 if (!_slots.TryGetValue(id, out var slot)) continue;
-                float x = startX + i * slotPitch;
+                float x = i * slotPitch;
                 if (slot.IconGO   != null)
                     slot.IconGO.transform.localPosition  = new Vector3(x, iconY, -100f);
                 if (slot.RingGO   != null)
@@ -1205,7 +1188,7 @@ public static class PingTrackerPatch
             {
                 if (_namePosition is SpeakingBarNamePosition.Top or SpeakingBarNamePosition.Bottom)
                 {
-                    float centre = startX + (i - 1) * slotPitch * 0.5f;
+                    float centre = (i - 1) * slotPitch * 0.5f;
                     float half = Mathf.Max(centre - cMinX, cMaxX - centre);
                     cMinX = centre - half;
                     cMaxX = centre + half;

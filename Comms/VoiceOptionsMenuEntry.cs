@@ -29,13 +29,12 @@ public static class VoiceOptionsMenuEntry
 
     [HarmonyPatch(typeof(OptionsMenuBehaviour), nameof(OptionsMenuBehaviour.Close))]
     [HarmonyPrefix]
-    static bool PerfectComms_BlockOptionsClose() => !VoiceUiKit.BlockGameInput;
+    static bool PerfectComms_BlockOptionsClose() => !VoiceUiKit.AnyPanelOpen;
 
     [HarmonyPatch(typeof(OptionsMenuBehaviour), nameof(OptionsMenuBehaviour.Close))]
     [HarmonyPostfix]
     static void PerfectComms_OnOptionsClose()
     {
-        if (VoiceUiKit.BlockGameInput) return;
         _menu = null;
         if (_button != null) _button.SetActive(false);
         try { if (!HudManager.InstanceExists) VoiceSettingsPanel.ForceClose(); }
@@ -46,7 +45,9 @@ public static class VoiceOptionsMenuEntry
     {
         _menu = menu;
         EnsureButton();
-        if (_button != null && !_button.activeSelf) { _appearT = 0f; _button.SetActive(true); }
+        if (_button != null && !_button.activeSelf && !VoiceUiKit.AnyPanelOpen
+            && menu != null && menu.gameObject.activeInHierarchy)
+        { _appearT = 0f; _button.SetActive(true); }
     }
 
     private static void EnsureButton()
@@ -115,9 +116,10 @@ public static class VoiceOptionsMenuEntry
     public static void TickButton()
     {
         if (_button == null || !_button.activeSelf) return;
-        if (_menu == null || !_menu.isActiveAndEnabled)
+        if (_menu == null || _menu.gameObject == null || !_menu.gameObject.activeInHierarchy)
         {
             _button.SetActive(false);
+            _menu = null;
             return;
         }
 

@@ -27,7 +27,23 @@ public static class VoiceModalInputBlocker
     [HarmonyPrefix]
     static bool PerfectComms_BlockMouseOver() => !Blocked;
 
-    [HarmonyPatch(typeof(SlideBar), nameof(SlideBar.Update))]
+    [HarmonyPatch(typeof(SlideBar), nameof(SlideBar.ReceiveClickDrag))]
     [HarmonyPrefix]
-    static bool PerfectComms_BlockSlideBar() => !Blocked;
+    static bool PerfectComms_BlockSlideDrag() => !Blocked;
+
+    [HarmonyPatch(typeof(SlideBar), nameof(SlideBar.ControllerIncrease))]
+    [HarmonyPrefix]
+    static bool PerfectComms_BlockSlideIncrease() => !Blocked;
+
+    [HarmonyPatch(typeof(SlideBar), nameof(SlideBar.ControllerDecrease))]
+    [HarmonyPrefix]
+    static bool PerfectComms_BlockSlideDecrease() => !Blocked;
+
+    [HarmonyPatch(typeof(PassiveButtonManager), nameof(PassiveButtonManager.Update))]
+    [HarmonyPrefix]
+    static bool PerfectComms_BlockPbmUpdate() => !Blocked;
+
+    [HarmonyPatch(typeof(ControllerManager), nameof(ControllerManager.Update))]
+    [HarmonyPrefix]
+    static bool PerfectComms_BlockControllerUpdate() => !Blocked;
 }
