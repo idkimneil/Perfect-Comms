@@ -943,9 +943,9 @@ internal static class VoiceUiKit
             group.anchoredPosition = new Vector2(ControlLeft, 0f);
 
             var valuePill = Rect("ValuePill", group);
-            valuePill.Anchor(new Vector2(0f, 0.5f), new Vector2(1f, 0.5f), new Vector2(0.5f, 0.5f));
-            valuePill.offsetMin = new Vector2(44f, -1f);
-            valuePill.offsetMax = new Vector2(-44f, 1f);
+            valuePill.Anchor(new Vector2(0f, 0f), new Vector2(1f, 1f), new Vector2(0.5f, 0.5f));
+            valuePill.offsetMin = new Vector2(44f, 2f);
+            valuePill.offsetMax = new Vector2(-44f, -2f);
             var valuePillImg = valuePill.gameObject.AddComponent<Image>();
             valuePillImg.sprite = Rounded(true);
             valuePillImg.type = Image.Type.Sliced;
