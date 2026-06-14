@@ -60,11 +60,11 @@ public class VoiceChatGameOptions
         {
             Visible = TeamRadioSubOptionsVisible
         };
-        TeamRadioVampires = new ToggleHolder(cfg, Section, "TeamRadioVampires", "Team Radio - <color=#E0344A>Vampires</color>", true)
+        TeamRadioVampires = new ToggleHolder(cfg, Section, "TeamRadioVampires", "<color=#A32929><b>Vampire</b></color>: Team Radio", true)
         {
             Visible = TeamRadioSubOptionsVisible
         };
-        TeamRadioLovers = new ToggleHolder(cfg, Section, "TeamRadioLovers", "Team Radio - <color=#FF66CC>Lovers</color>", true)
+        TeamRadioLovers = new ToggleHolder(cfg, Section, "TeamRadioLovers", "<color=#FF66CC><b>Lovers</b></color>: Team Radio", true)
         {
             Visible = TeamRadioSubOptionsVisible
         };
