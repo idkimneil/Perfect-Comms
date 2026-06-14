@@ -7,8 +7,8 @@ namespace VoiceChatPlugin.VoiceChat;
 
 public static class HostSettingsPanel
 {
-    private const float PanelW = 1180f;
-    private const float PanelH = 720f;
+    private const float PanelW = 908f;
+    private const float PanelH = 554f;
     private const float PanelScale = 1.3f;
     private const float RowH = 70f;
     private const float TopPad = 12f;
