@@ -221,12 +221,12 @@ public static class HostSettingsPanel
             },
             4 => new List<OptionHolder>
             {
-                g.TeamRadioVampires, g.TeamRadioLovers,
                 r.MuteBlackmailedInMeetings, r.MuteBlackmailedNextRound, r.MuteParasiteControlled,
                 r.ParasiteHearFromVictim, r.MutePuppeteerControlled, r.PuppeteerHearFromVictim,
                 r.MuteSwooperWhileSwooped, r.MuffleBlindedOrFlashedHearing, r.MuffleHypnotizedDuringHysteria,
                 r.CrewpostorUsesImpostorVoice, r.MuteGlitchHacked, r.MuteJailedInMeetings,
-                r.JailPersistsAfterJailorDeath, r.JailorCanUnmuteJailed, r.MediumGhostVoice
+                r.JailPersistsAfterJailorDeath, r.JailorCanUnmuteJailed, r.MediumGhostVoice,
+                g.TeamRadioVampires, g.TeamRadioLovers
             },
             _ => new List<OptionHolder>()
         };

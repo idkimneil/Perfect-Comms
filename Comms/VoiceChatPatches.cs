@@ -1,4 +1,3 @@
-using System;
 using HarmonyLib;
 using UnityEngine;
 
@@ -31,9 +30,6 @@ public static class VoiceChatPatches
     [HarmonyPostfix, HarmonyPatch(typeof(KeyboardJoystick), nameof(KeyboardJoystick.Update))]
     static void KeyboardUpdate_Post()
     {
-        var settings = VoiceSettings.Instance;
-        PollMouseToggleBinds(settings);
-
         VoiceChatKeybinds.ToggleMute.FireIfPressed();
         VoiceChatKeybinds.ToggleSpeaker.FireIfPressed();
         VoiceChatKeybinds.VolumeMenu.FireIfPressed();
@@ -48,11 +44,7 @@ public static class VoiceChatPatches
         bool up = false;
         if (canUseRadio)
         {
-            var radioInput = ReadHoldInput(
-                VoiceChatKeybinds.TeamRadio,
-                settings?.ImpostorRadioMouseBind.Value ?? VoiceMouseBind.Off);
-
-            var radioHold = CombineImmediateMouseHold(radioInput.KeyboardHeld, radioInput.MouseHeld, ref _radioInputHeld);
+            var radioHold = ReadHold(VoiceChatKeybinds.TeamRadio.IsHeld(), ref _radioInputHeld);
             held = radioHold.Held;
             down = radioHold.Down;
             up = radioHold.Up;
@@ -71,11 +63,7 @@ public static class VoiceChatPatches
             return;
         }
 
-        var pttInput = ReadHoldInput(
-            VoiceChatKeybinds.PushToTalk,
-            settings?.PushToTalkMouseBind.Value ?? VoiceMouseBind.Off);
-
-        bool pttHeld = CombineImmediateMouseHold(pttInput.KeyboardHeld, pttInput.MouseHeld, ref _pushToTalkInputHeld).Held;
+        bool pttHeld = ReadHold(VoiceChatKeybinds.PushToTalk.IsHeld(), ref _pushToTalkInputHeld).Held;
         VoiceChatHudState.UpdatePushToTalkHeld(pttHeld);
     }
 
@@ -146,63 +134,12 @@ public static class VoiceChatPatches
         return true;
     }
 
-    private static void PollMouseToggleBinds(VoiceChatLocalSettings? settings)
+    private static HoldInputState ReadHold(bool held, ref bool previousHeld)
     {
-        TryRunMouseToggle(settings?.MuteMouseBind.Value ?? VoiceMouseBind.Off, ToggleMuteFromInput);
-        TryRunMouseToggle(settings?.SpeakerMouseBind.Value ?? VoiceMouseBind.Off, ToggleSpeakerFromInput);
-    }
-
-    private static void TryRunMouseToggle(VoiceMouseBind bind, Action action)
-    {
-        if (IsMouseBindDown(bind))
-            action();
-    }
-
-    private static HoldInputSources ReadHoldInput(VoiceKeybind keybind, VoiceMouseBind mouseBind)
-    {
-        bool keyboardHeld = keybind.IsHeld();
-        return new HoldInputSources(keyboardHeld, IsMouseBindHeld(mouseBind));
-    }
-
-    private static HoldInputState CombineImmediateMouseHold(bool keyboardHeld, bool mouseHeld, ref bool previousHeld)
-    {
-        bool held = keyboardHeld || mouseHeld;
         bool down = held && !previousHeld;
         bool up = !held && previousHeld;
         previousHeld = held;
         return new HoldInputState(held, down, up);
-    }
-
-    private static bool IsMouseBindDown(VoiceMouseBind bind)
-    {
-        int button = GetMouseButtonIndex(bind);
-        return button >= 0 && Input.GetMouseButtonDown(button);
-    }
-
-    private static bool IsMouseBindHeld(VoiceMouseBind bind)
-    {
-        int button = GetMouseButtonIndex(bind);
-        return button >= 0 && Input.GetMouseButton(button);
-    }
-
-    private static int GetMouseButtonIndex(VoiceMouseBind bind)
-        => bind switch
-        {
-            VoiceMouseBind.MB4 => 3,
-            VoiceMouseBind.MB5 => 4,
-            _ => -1,
-        };
-
-    private readonly struct HoldInputSources
-    {
-        public HoldInputSources(bool keyboardHeld, bool mouseHeld)
-        {
-            KeyboardHeld = keyboardHeld;
-            MouseHeld = mouseHeld;
-        }
-
-        public bool KeyboardHeld { get; }
-        public bool MouseHeld { get; }
     }
 
     private readonly struct HoldInputState
