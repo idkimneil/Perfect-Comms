@@ -638,43 +638,43 @@ public static class PingTrackerPatch
     // are too many speakers to fit on screen, then clamp so no slot leaves the screen.
     private static void PositionSpeakingBarManual()
     {
-        if (_barRoot == null) return;
         var cam = Camera.main;
-        if (cam == null) return; // scene transition — keep last-known position this frame
+        if (cam == null) return;
+        PositionBarAtViewport(cam, _manualX, _manualY);
+    }
 
-        // Baseline scale before measuring; auto-fit shrinks below this only when needed and
-        // restores to 1 automatically once the speaker count drops back down.
+    private static void PositionSpeakingBarPreset()
+    {
+        var cam = Camera.main;
+        if (cam == null) return;
+        if (_barAspect != null) _barAspect.enabled = false;
+        var anchor = PresetViewportAnchor(_barPosition);
+        PositionBarAtViewport(cam, anchor.x, anchor.y);
+    }
+
+    private static Vector2 PresetViewportAnchor(SpeakingBarPosition pos) => pos switch
+    {
+        SpeakingBarPosition.TopLeft      => new Vector2(0f, 1f),
+        SpeakingBarPosition.TopMiddle    => new Vector2(0.5f, 1f),
+        SpeakingBarPosition.TopRight     => new Vector2(1f, 1f),
+        SpeakingBarPosition.MiddleLeft   => new Vector2(0f, 0.5f),
+        SpeakingBarPosition.MiddleRight  => new Vector2(1f, 0.5f),
+        SpeakingBarPosition.BottomLeft   => new Vector2(0f, 0f),
+        SpeakingBarPosition.BottomMiddle => new Vector2(0.5f, 0f),
+        SpeakingBarPosition.BottomRight  => new Vector2(1f, 0f),
+        _ => new Vector2(0.5f, 1f),
+    };
+
+    private static void PositionBarAtViewport(Camera cam, float vx, float vy)
+    {
+        if (_barRoot == null) return;
         ApplyRootScale();
-
-        var worldPt = cam.ViewportToWorldPoint(new Vector3(_manualX, _manualY, ManualViewportDepth));
+        var worldPt = cam.ViewportToWorldPoint(new Vector3(vx, vy, ManualViewportDepth));
         var parent  = _barRoot.transform.parent;
         Vector3 local = parent != null
             ? parent.InverseTransformPoint(new Vector3(worldPt.x, worldPt.y, worldPt.z))
             : new Vector3(worldPt.x, worldPt.y, worldPt.z);
         _barRoot.transform.localPosition = new Vector3(local.x, local.y, -100f);
-
-        AutoFitSpeakingBar(cam);
-        ClampSpeakingBarToViewport(cam);
-    }
-
-    private static void PositionSpeakingBarPreset()
-    {
-        if (_barRoot == null) return;
-
-        if (_barAspect != null)
-        {
-            _barAspect.enabled = false;
-            ApplyPositionToAspect(_barAspect, _barPosition);
-            _barAspect.AdjustPosition();
-        }
-
-        var pos = _barRoot.transform.localPosition;
-        _barRoot.transform.localPosition = new Vector3(pos.x, pos.y, -100f);
-
-        var cam = Camera.main;
-        if (cam == null) return;
-
-        ApplyRootScale();
         AutoFitSpeakingBar(cam);
         ClampSpeakingBarToViewport(cam);
     }
@@ -732,11 +732,6 @@ public static class PingTrackerPatch
         if (slot.IconGO != null)
             foreach (var r in slot.IconGO.GetComponentsInChildren<Renderer>(true))
                 if (r != null) _slotBoundsScratch.Add(r);
-        if (slot.RingGO != null)
-        {
-            var rr = slot.RingGO.GetComponent<Renderer>();
-            if (rr != null) _slotBoundsScratch.Add(rr);
-        }
         if (slot.LabelTMP != null)
         {
             var lr = slot.LabelTMP.GetComponent<Renderer>();
@@ -765,7 +760,7 @@ public static class PingTrackerPatch
             for (int i = 0; i < rends.Length; i++)
             {
                 var r = rends[i];
-                if (r == null || !r.gameObject.activeInHierarchy) continue;
+                if (r == null || !r.enabled || !r.gameObject.activeInHierarchy) continue;
                 var b = r.bounds;
                 AccumulateViewportPoint(cam, b.min.x, b.min.y, depthZ, ref minX, ref maxX, ref minY, ref maxY, ref any);
                 AccumulateViewportPoint(cam, b.max.x, b.min.y, depthZ, ref minX, ref maxX, ref minY, ref maxY, ref any);
