@@ -379,6 +379,8 @@ public static class VoiceSettingsPanel
         Slider(defs, "Button Position Y", s.ButtonPositionY, Pct);
 
         Section(defs, "SPEAKING BAR");
+        EnumStep(defs, "Speaking Bar Name Pos", s.SpeakingBarNamePosition, new[] { "Bottom", "Top", "Left", "Right" });
+        Toggle(defs, "Speaking Bar Manual Layout", s.SpeakingBarManualLayout);
         EnumStep(defs, "Speaking Bar Position", s.SpeakingBarPosition, new[]
         {
             "Top Left", "Top Middle", "Top Right", "Bottom Left", "Bottom Middle", "Bottom Right",
@@ -388,8 +390,6 @@ public static class VoiceSettingsPanel
             () => s.SpeakingBarManualLayout.Value);
         Slider(defs, "Speaking Bar X", s.SpeakingBarX, Pct, () => s.SpeakingBarManualLayout.Value);
         Slider(defs, "Speaking Bar Y", s.SpeakingBarY, Pct, () => s.SpeakingBarManualLayout.Value);
-        EnumStep(defs, "Speaking Bar Name Pos", s.SpeakingBarNamePosition, new[] { "Bottom", "Top", "Left", "Right" });
-        Toggle(defs, "Speaking Bar Manual Layout", s.SpeakingBarManualLayout);
         Toggle(defs, "Speaking Bar Backdrop", s.SpeakingBarBackdrop);
 
         Section(defs, "MEETING OVERLAY");
