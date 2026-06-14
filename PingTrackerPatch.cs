@@ -111,6 +111,11 @@ public static class PingTrackerPatch
     private static float             _manualY = 0.85f;
     private static SpeakingBarNamePosition _namePosition = SpeakingBarNamePosition.Bottom;
     private static bool              _backdropEnabled;
+    private static float             _barScale = 1f;
+    private static bool              _fixedAllPlayers;
+    private static readonly HashSet<byte> _publiclyDead = new();
+    private static readonly List<byte> _fixedRoster = new();
+    private static readonly HashSet<byte> _fixedRosterSet = new();
     private static readonly Dictionary<byte, SpeakerSlot> _slots = new();
     private static readonly List<byte> _slotOrder = new();
     private static readonly HashSet<byte> _activeSpeakerIds = new();
@@ -154,6 +159,8 @@ public static class PingTrackerPatch
         _manualY      = settings.SpeakingBarY.Value;
         _namePosition = settings.SpeakingBarNamePosition.Value;
         _backdropEnabled = settings.SpeakingBarBackdrop.Value;
+        _barScale     = Mathf.Clamp(settings.SpeakingBarScale.Value, 0.5f, 2.0f);
+        _fixedAllPlayers = settings.SpeakingBarFixedAllPlayers.Value;
 
         if (_manualLayout)
         {
@@ -166,7 +173,7 @@ public static class PingTrackerPatch
             _layoutVertical       = IsVerticalPreset(_barPosition);
             _layoutAnchoredBottom = IsBottomAnchoredPreset(_barPosition);
             // Drop any auto-fit shrink applied while manual mode was active.
-            if (_barRoot != null) _barRoot.transform.localScale = Vector3.one;
+            ApplyRootScale();
             if (_barAspect != null)
             {
                 _barAspect.enabled = true;
@@ -177,6 +184,123 @@ public static class PingTrackerPatch
 
         _layoutDirty = true;
         LayoutSlotsIfDirty();
+    }
+
+    private static void ApplyRootScale()
+    {
+        if (_barRoot != null) _barRoot.transform.localScale = Vector3.one * _barScale;
+    }
+
+    public static void ClearSpeakingBarSlots()
+    {
+        if (_slots.Count == 0) return;
+        foreach (var kv in _slots)
+        {
+            var slot = kv.Value;
+            if (slot.IconGO   != null) Object.Destroy(slot.IconGO);
+            if (slot.RingGO   != null) Object.Destroy(slot.RingGO);
+            if (slot.LabelTMP != null) Object.Destroy(slot.LabelTMP.gameObject);
+        }
+        _slots.Clear();
+        _slotOrder.Clear();
+        _layoutDirty = true;
+        _sortingDirty = true;
+    }
+
+    private static void UpdatePubliclyDead(VoiceGameStateSnapshot? snapshot)
+    {
+        if (snapshot == null) return;
+        if (snapshot.Phase is VoiceGamePhase.Lobby or VoiceGamePhase.Menu)
+        {
+            _publiclyDead.Clear();
+            return;
+        }
+        if (snapshot.MeetingActive || snapshot.Phase is VoiceGamePhase.Meeting or VoiceGamePhase.Exile)
+        {
+            foreach (var p in snapshot.Players)
+                if (p.IsDead)
+                    _publiclyDead.Add(p.PlayerId);
+        }
+    }
+
+    private static bool IsFixedEligible(VoicePlayerSnapshot p)
+        => !p.Disconnected && !p.IsDummy && p.ClientId >= 0 && p.IsVisible;
+
+    private static void EnsureFixedRosterSlots(VoiceGameStateSnapshot snapshot)
+    {
+        _fixedRoster.Clear();
+        _fixedRosterSet.Clear();
+        foreach (var p in snapshot.Players)
+        {
+            if (!IsFixedEligible(p)) continue;
+            if (_fixedRosterSet.Add(p.PlayerId))
+                _fixedRoster.Add(p.PlayerId);
+        }
+        _fixedRoster.Sort();
+
+        foreach (byte id in _fixedRoster)
+        {
+            if (_slots.TryGetValue(id, out var existing))
+            {
+                if (existing.IconGO == null)
+                    TryCreateSlotIcon(id, existing);
+                continue;
+            }
+            AddSlot(id, 0f);
+            if (_slots.TryGetValue(id, out var slot) && !_activeSpeakerIds.Contains(id))
+            {
+                slot.IsSpeaking = false;
+                slot.TargetLevel = 0f;
+            }
+        }
+    }
+
+    private static void ApplyFixedRosterOrder()
+    {
+        bool changed = _slotOrder.Count != _fixedRoster.Count;
+        if (!changed)
+        {
+            for (int i = 0; i < _fixedRoster.Count; i++)
+                if (_slotOrder[i] != _fixedRoster[i]) { changed = true; break; }
+        }
+        if (!changed) return;
+
+        _slotOrder.Clear();
+        foreach (byte id in _fixedRoster)
+            if (_slots.ContainsKey(id))
+                _slotOrder.Add(id);
+        _layoutDirty = true;
+    }
+
+    private static void ApplyFixedGhostAlpha(VoiceGameStateSnapshot snapshot)
+    {
+        foreach (var kv in _slots)
+        {
+            bool ghost = snapshot.TryGetPlayer(kv.Key, out var p) && p.IsDead && _publiclyDead.Contains(kv.Key);
+            float target = ghost ? 0.45f : 1f;
+            var slot = kv.Value;
+            if (slot.IconGO == null)
+            {
+                slot.GhostAlphaIcon = null;
+                slot.AppliedGhostAlpha = 1f;
+                continue;
+            }
+            if (ReferenceEquals(slot.GhostAlphaIcon, slot.IconGO) && Mathf.Approximately(slot.AppliedGhostAlpha, target))
+                continue;
+            SetIconAlpha(slot.IconGO, target);
+            slot.GhostAlphaIcon = slot.IconGO;
+            slot.AppliedGhostAlpha = target;
+        }
+    }
+
+    private static void SetIconAlpha(GameObject iconGO, float alpha)
+    {
+        foreach (var sr in iconGO.GetComponentsInChildren<SpriteRenderer>(true))
+        {
+            var c = sr.color;
+            c.a = alpha;
+            sr.color = c;
+        }
     }
 
     private static bool IsVerticalPreset(SpeakingBarPosition pos)
@@ -266,11 +390,18 @@ public static class PingTrackerPatch
             if (MeetingHud.Instance == null)
                 MeetingSpeakingIndicatorPatch.UpdateIndicators(overlay);
 
+            var snapshot = room?.CurrentSnapshot;
+            UpdatePubliclyDead(snapshot);
+            bool fixedActive = _fixedAllPlayers && snapshot != null && snapshot.Phase == VoiceGamePhase.Tasks;
+
             foreach (var kv in _slots)
             {
                 kv.Value.IsSpeaking = false;
                 kv.Value.TargetLevel = 0f;
             }
+
+            if (fixedActive)
+                EnsureFixedRosterSlots(snapshot!);
 
             // Add / rebuild slots for speaking players
             foreach (byte id in _activeSpeakerIds)
@@ -331,11 +462,24 @@ public static class PingTrackerPatch
 
             UpdateSlotRings();
 
-            _fadedSlotIds.Clear();
-            foreach (var kv in _slots)
-                if ((!kv.Value.IsSpeaking && kv.Value.Visibility <= 0.01f) || ShouldForceRemoveSlot(kv.Key, kv.Value))
-                    _fadedSlotIds.Add(kv.Key);
-            foreach (var id in _fadedSlotIds) RemoveSlot(id);
+            if (fixedActive)
+            {
+                _fadedSlotIds.Clear();
+                foreach (var kv in _slots)
+                    if (!_fixedRosterSet.Contains(kv.Key))
+                        _fadedSlotIds.Add(kv.Key);
+                foreach (var id in _fadedSlotIds) RemoveSlot(id);
+                ApplyFixedRosterOrder();
+                ApplyFixedGhostAlpha(snapshot!);
+            }
+            else
+            {
+                _fadedSlotIds.Clear();
+                foreach (var kv in _slots)
+                    if ((!kv.Value.IsSpeaking && kv.Value.Visibility <= 0.01f) || ShouldForceRemoveSlot(kv.Key, kv.Value))
+                        _fadedSlotIds.Add(kv.Key);
+                foreach (var id in _fadedSlotIds) RemoveSlot(id);
+            }
 
             LayoutSlotsIfDirty();
 
@@ -387,6 +531,8 @@ public static class PingTrackerPatch
             _manualY      = settings.SpeakingBarY.Value;
             _namePosition = settings.SpeakingBarNamePosition.Value;
             _backdropEnabled = settings.SpeakingBarBackdrop.Value;
+            _barScale     = Mathf.Clamp(settings.SpeakingBarScale.Value, 0.5f, 2.0f);
+            _fixedAllPlayers = settings.SpeakingBarFixedAllPlayers.Value;
             if (_manualLayout)
             {
                 _layoutVertical       = settings.SpeakingBarLayout.Value == VoiceControlsLayout.Vertical;
@@ -398,6 +544,8 @@ public static class PingTrackerPatch
                 _layoutAnchoredBottom = IsBottomAnchoredPreset(_barPosition);
             }
         }
+
+        ApplyRootScale();
 
         if (_manualLayout)
         {
@@ -490,7 +638,7 @@ public static class PingTrackerPatch
 
         // Baseline scale before measuring; auto-fit shrinks below this only when needed and
         // restores to 1 automatically once the speaker count drops back down.
-        _barRoot.transform.localScale = Vector3.one;
+        ApplyRootScale();
 
         var worldPt = cam.ViewportToWorldPoint(new Vector3(_manualX, _manualY, ManualViewportDepth));
         var parent  = _barRoot.transform.parent;
@@ -522,7 +670,7 @@ public static class PingTrackerPatch
         if (sizeY > allowed) scale = Mathf.Min(scale, allowed / sizeY);
 
         if (scale < 0.999f)
-            _barRoot.transform.localScale = Vector3.one * scale;
+            _barRoot.transform.localScale = Vector3.one * scale * _barScale;
     }
 
     // Generalizes VoiceChatHudState.ClampVoiceButtonViewportPositions from the 3 fixed
@@ -1384,5 +1532,7 @@ public static class PingTrackerPatch
         public float             LabelHeight;
         public bool              LabelMeasurePending;
         public int               VanillaStyleVersion;
+        public float             AppliedGhostAlpha;
+        public GameObject?       GhostAlphaIcon;
     }
 }

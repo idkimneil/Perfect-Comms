@@ -380,6 +380,8 @@ public static class VoiceSettingsPanel
         Slider(defs, "Button Scale", s.OverlayScale, Num2);
 
         Section(defs, "SPEAKING BAR");
+        Toggle(defs, "Fixed All Players", s.SpeakingBarFixedAllPlayers);
+        Slider(defs, "Speaking Bar Scale", s.SpeakingBarScale, Num2);
         EnumStep(defs, "Speaking Bar Position", s.SpeakingBarPosition, new[]
         {
             "Top Left", "Top Middle", "Top Right", "Bottom Left", "Bottom Middle", "Bottom Right",

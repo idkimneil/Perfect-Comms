@@ -96,6 +96,8 @@ public class VoiceChatLocalSettings
     public ConfigEntry<SpeakingBarNamePosition> SpeakingBarNamePosition { get; }
     public ConfigEntry<bool> SpeakingBarManualLayout { get; }
     public ConfigEntry<bool> SpeakingBarBackdrop { get; }
+    public ConfigEntry<float> SpeakingBarScale { get; }
+    public ConfigEntry<bool> SpeakingBarFixedAllPlayers { get; }
     public ConfigEntry<bool> MeetingSpeakingOverlay { get; }
     public ConfigEntry<JailUnmuteButtonPlacement> JailUnmuteButtonPlacement { get; }
     public ConfigEntry<float> SpeakingBarX { get; }
@@ -293,6 +295,13 @@ public class VoiceChatLocalSettings
 
         SpeakingBarBackdrop = config.Bind("UI", "SpeakingBarBackdrop", false,
             new ConfigDescription("Show a translucent dark backdrop behind the speaking bar."));
+
+        SpeakingBarScale = config.Bind("UI", "SpeakingBarScale", 1.0f,
+            new ConfigDescription("Scale of the speaking bar",
+                new AcceptableValueRange<float>(0.5f, 2.0f)));
+
+        SpeakingBarFixedAllPlayers = config.Bind("UI", "SpeakingBarFixedAllPlayers", false,
+            new ConfigDescription("Show a fixed slot for every player during tasks instead of only current speakers."));
 
         JailUnmuteButtonPlacement = config.Bind("UI", "JailUnmuteButtonPlacement",
             VoiceChatPlugin.VoiceChat.JailUnmuteButtonPlacement.MeetingCard,
@@ -529,9 +538,15 @@ public class VoiceChatLocalSettings
         }
         else if (configEntry == SpeakingBarManualLayout || configEntry == SpeakingBarX ||
                  configEntry == SpeakingBarY || configEntry == SpeakingBarLayout ||
-                 configEntry == SpeakingBarNamePosition || configEntry == SpeakingBarBackdrop)
+                 configEntry == SpeakingBarNamePosition || configEntry == SpeakingBarBackdrop ||
+                 configEntry == SpeakingBarScale)
         {
             PingTrackerPatch.ApplySpeakingBarLayoutSettings();
+        }
+        else if (configEntry == SpeakingBarFixedAllPlayers)
+        {
+            PingTrackerPatch.ApplySpeakingBarLayoutSettings();
+            PingTrackerPatch.ClearSpeakingBarSlots();
         }
         else if (configEntry == JailUnmuteButtonPlacement)
         {
