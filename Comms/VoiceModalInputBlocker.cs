@@ -26,4 +26,8 @@ public static class VoiceModalInputBlocker
     [HarmonyPatch(typeof(PassiveButton), nameof(PassiveButton.ReceiveMouseOver))]
     [HarmonyPrefix]
     static bool PerfectComms_BlockMouseOver() => !Blocked;
+
+    [HarmonyPatch(typeof(SlideBar), nameof(SlideBar.Update))]
+    [HarmonyPrefix]
+    static bool PerfectComms_BlockSlideBar() => !Blocked;
 }

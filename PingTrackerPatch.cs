@@ -240,10 +240,17 @@ public static class PingTrackerPatch
 
         foreach (byte id in _fixedRoster)
         {
+            var player = FindPlayer(id);
             if (_slots.TryGetValue(id, out var existing))
             {
                 if (existing.IconGO == null)
                     TryCreateSlotIcon(id, existing);
+                if (existing.LabelTMP != null)
+                {
+                    string liveName = GetDisplayName(player);
+                    if (existing.LabelTMP.text != liveName)
+                        UpdateSlotLabel(existing, player);
+                }
                 continue;
             }
             AddSlot(id, 0f);
@@ -382,7 +389,7 @@ public static class PingTrackerPatch
             // someone is speaking (the active-speaker loop calls FindPlayer/GetFingerprint) or slots are
             // still fading out. When the overlay is idle (nobody speaking, no slots), skip the per-frame
             // AllPlayerControls IL2CPP walk entirely.
-            if (_activeSpeakerIds.Count > 0 || _slots.Count > 0)
+            if (_activeSpeakerIds.Count > 0 || _slots.Count > 0 || _fixedAllPlayers)
                 RebuildPlayerLookup();
             else
                 _playerLookup.Clear();
@@ -758,7 +765,7 @@ public static class PingTrackerPatch
             for (int i = 0; i < rends.Length; i++)
             {
                 var r = rends[i];
-                if (r == null || !r.enabled || !r.gameObject.activeInHierarchy) continue;
+                if (r == null || !r.gameObject.activeInHierarchy) continue;
                 var b = r.bounds;
                 AccumulateViewportPoint(cam, b.min.x, b.min.y, depthZ, ref minX, ref maxX, ref minY, ref maxY, ref any);
                 AccumulateViewportPoint(cam, b.max.x, b.min.y, depthZ, ref minX, ref maxX, ref minY, ref maxY, ref any);
