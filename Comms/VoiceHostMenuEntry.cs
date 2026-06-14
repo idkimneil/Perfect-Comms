@@ -45,7 +45,7 @@ public static class VoiceHostMenuEntry
         if (_chip.Built) return;
         _chip.Build("HOST", "HOST VOICE SETTINGS",
             new Vector2(0.5f, 1f), new Vector2(0.5f, 1f), new Vector2(0.5f, 1f),
-            new Vector2(0f, -120f),
+            new Vector2(0f, -48f),
             HostSettingsPanel.Show,
             static () => _hostMenu != null && _hostMenu.gameObject != null && _hostMenu.gameObject.activeInHierarchy,
             HostGate);
