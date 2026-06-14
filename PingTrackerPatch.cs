@@ -392,7 +392,7 @@ public static class PingTrackerPatch
 
             var snapshot = room?.CurrentSnapshot;
             UpdatePubliclyDead(snapshot);
-            bool fixedActive = _fixedAllPlayers && snapshot != null && snapshot.Phase == VoiceGamePhase.Tasks;
+            bool fixedActive = _fixedAllPlayers && snapshot != null && MeetingHud.Instance == null;
 
             foreach (var kv in _slots)
             {
@@ -608,8 +608,7 @@ public static class PingTrackerPatch
         }
         else
         {
-            var pos = _barRoot.transform.localPosition;
-            _barRoot.transform.localPosition = new Vector3(pos.x, pos.y, -100f);
+            PositionSpeakingBarPreset();
         }
         // Cache the bar's SortingGroup instead of GetComponent/AddComponent every frame. The Unity
         // null-check re-acquires it if the bar GameObject was destroyed and recreated.
@@ -647,6 +646,28 @@ public static class PingTrackerPatch
             : new Vector3(worldPt.x, worldPt.y, worldPt.z);
         _barRoot.transform.localPosition = new Vector3(local.x, local.y, -100f);
 
+        AutoFitSpeakingBar(cam);
+        ClampSpeakingBarToViewport(cam);
+    }
+
+    private static void PositionSpeakingBarPreset()
+    {
+        if (_barRoot == null) return;
+
+        if (_barAspect != null)
+        {
+            _barAspect.enabled = false;
+            ApplyPositionToAspect(_barAspect, _barPosition);
+            _barAspect.AdjustPosition();
+        }
+
+        var pos = _barRoot.transform.localPosition;
+        _barRoot.transform.localPosition = new Vector3(pos.x, pos.y, -100f);
+
+        var cam = Camera.main;
+        if (cam == null) return;
+
+        ApplyRootScale();
         AutoFitSpeakingBar(cam);
         ClampSpeakingBarToViewport(cam);
     }
