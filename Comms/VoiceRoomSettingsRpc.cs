@@ -106,9 +106,10 @@ internal static class VoiceRoomSettingsRpc
         bool cameraCanHear = reader.ReadBoolean();
         bool teamRadio = reader.ReadBoolean();
         bool hasTeamRadioSubSettings = reader.BytesRemaining >= 13;
-        bool teamRadioImpostors = true;
-        bool teamRadioVampires = false;
-        bool teamRadioLovers = false;
+        var defaults = VoiceRoomSettingsSnapshot.Defaults;
+        bool teamRadioImpostors = defaults.TeamRadioImpostors;
+        bool teamRadioVampires = defaults.TeamRadioVampires;
+        bool teamRadioLovers = defaults.TeamRadioLovers;
         if (hasTeamRadioSubSettings)
         {
             teamRadioImpostors = reader.ReadBoolean();
@@ -125,18 +126,18 @@ internal static class VoiceRoomSettingsRpc
         bool muteParasiteControlled = reader.ReadBoolean();
         bool mutePuppeteerControlled = reader.ReadBoolean();
         bool crewpostorUsesImpostorVoice = reader.ReadBoolean();
-        bool muteSwooperWhileSwooped = reader.BytesRemaining > 0 ? reader.ReadBoolean() : true;
-        int mediumGhostVoice = reader.BytesRemaining >= 4 ? reader.ReadInt32() : (int)MediumGhostVoiceMode.None;
-        bool muteGlitchHacked = reader.BytesRemaining > 0 ? reader.ReadBoolean() : true;
-        bool muffleBlindedOrFlashedHearing = reader.BytesRemaining > 0 ? reader.ReadBoolean() : true;
-        bool muffleHypnotizedDuringHysteria = reader.BytesRemaining > 0 ? reader.ReadBoolean() : true;
-        bool onlyMeetingOrLobbyAffectsGhosts = reader.BytesRemaining > 0 ? reader.ReadBoolean() : true;
-        bool teamRadioInMeetings = reader.BytesRemaining > 0 ? reader.ReadBoolean() : false;
-        bool puppeteerHearFromVictim = reader.BytesRemaining > 0 ? reader.ReadBoolean() : false;
-        bool parasiteHearFromVictim = reader.BytesRemaining > 0 ? reader.ReadBoolean() : false;
-        bool teamRadioInTasks = reader.BytesRemaining > 0 ? reader.ReadBoolean() : true;
-        bool ghostsHearEachOtherUnlimited = reader.BytesRemaining > 0 ? reader.ReadBoolean() : false;
-        bool jailPersistsAfterJailorDeath = reader.BytesRemaining > 0 ? reader.ReadBoolean() : false;
+        bool muteSwooperWhileSwooped = reader.BytesRemaining > 0 ? reader.ReadBoolean() : defaults.MuteSwooperWhileSwooped;
+        int mediumGhostVoice = reader.BytesRemaining >= 4 ? reader.ReadInt32() : defaults.MediumGhostVoice;
+        bool muteGlitchHacked = reader.BytesRemaining > 0 ? reader.ReadBoolean() : defaults.MuteGlitchHacked;
+        bool muffleBlindedOrFlashedHearing = reader.BytesRemaining > 0 ? reader.ReadBoolean() : defaults.MuffleBlindedOrFlashedHearing;
+        bool muffleHypnotizedDuringHysteria = reader.BytesRemaining > 0 ? reader.ReadBoolean() : defaults.MuffleHypnotizedDuringHysteria;
+        bool onlyMeetingOrLobbyAffectsGhosts = reader.BytesRemaining > 0 ? reader.ReadBoolean() : defaults.OnlyMeetingOrLobbyAffectsGhosts;
+        bool teamRadioInMeetings = reader.BytesRemaining > 0 ? reader.ReadBoolean() : defaults.TeamRadioInMeetings;
+        bool puppeteerHearFromVictim = reader.BytesRemaining > 0 ? reader.ReadBoolean() : defaults.PuppeteerHearFromVictim;
+        bool parasiteHearFromVictim = reader.BytesRemaining > 0 ? reader.ReadBoolean() : defaults.ParasiteHearFromVictim;
+        bool teamRadioInTasks = reader.BytesRemaining > 0 ? reader.ReadBoolean() : defaults.TeamRadioInTasks;
+        bool ghostsHearEachOtherUnlimited = reader.BytesRemaining > 0 ? reader.ReadBoolean() : defaults.GhostsHearEachOtherUnlimited;
+        bool jailPersistsAfterJailorDeath = reader.BytesRemaining > 0 ? reader.ReadBoolean() : defaults.JailPersistsAfterJailorDeath;
 
         return new VoiceRoomSettingsSnapshot(
             backend,
