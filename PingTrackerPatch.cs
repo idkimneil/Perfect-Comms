@@ -902,6 +902,7 @@ public static class PingTrackerPatch
         tmp.sortingLayerID     = SortingLayer.NameToID(VCSorting.Layer);
         tmp.sortingOrder       = VCSorting.Text;
         tmp.color              = Color.white;
+        tmp.alpha              = 0f;
         tmp.rectTransform.sizeDelta = new Vector2(1.4f, 0.45f);
         slot.LabelTMP = tmp;
         UpdateSlotLabel(slot, player);
@@ -961,6 +962,8 @@ public static class PingTrackerPatch
             slot.VanillaStyleVersion = _vanillaNameStyleVersion;
         slot.LabelTMP.text = GetDisplayName(player);
         slot.LabelMeasurePending = true;
+        if (slot.VanillaStyleVersion == _vanillaNameStyleVersion)
+            slot.LabelTMP.alpha = 1f;
     }
 
     private static TMPro.TMP_FontAsset? _vanillaNameFont;
@@ -1080,6 +1083,14 @@ public static class PingTrackerPatch
         foreach (var kv in _slots)
         {
             var slot = kv.Value;
+            if (slot.LabelTMP != null)
+            {
+                if (slot.VanillaStyleVersion != _vanillaNameStyleVersion && slot.LabelTMP.gameObject.activeInHierarchy
+                    && ApplyVanillaNameStyle(slot.LabelTMP, FindPlayer(kv.Key)))
+                    slot.VanillaStyleVersion = _vanillaNameStyleVersion;
+                if (slot.VanillaStyleVersion == _vanillaNameStyleVersion && slot.LabelTMP.alpha < 1f)
+                    slot.LabelTMP.alpha = 1f;
+            }
             if (slot.LabelMeasurePending && slot.LabelTMP != null && slot.LabelTMP.gameObject.activeInHierarchy)
             {
                 if (slot.VanillaStyleVersion != _vanillaNameStyleVersion && ApplyVanillaNameStyle(slot.LabelTMP, FindPlayer(kv.Key)))
