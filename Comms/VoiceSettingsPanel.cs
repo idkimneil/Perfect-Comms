@@ -377,6 +377,7 @@ public static class VoiceSettingsPanel
         EnumStep(defs, "Controls Layout", s.VoiceControlsLayout, new[] { "Vertical", "Horizontal" });
         Slider(defs, "Button Position X", s.ButtonPositionX, Pct);
         Slider(defs, "Button Position Y", s.ButtonPositionY, Pct);
+        Slider(defs, "Button Scale", s.OverlayScale, Num2);
 
         Section(defs, "SPEAKING BAR");
         EnumStep(defs, "Speaking Bar Name Pos", s.SpeakingBarNamePosition, new[] { "Bottom", "Top", "Left", "Right" });
@@ -394,7 +395,6 @@ public static class VoiceSettingsPanel
 
         Section(defs, "MEETING OVERLAY");
         Toggle(defs, "Meeting Speaking Overlay", s.MeetingSpeakingOverlay);
-        Slider(defs, "Overlay Scale", s.OverlayScale, Num2, () => s.MeetingSpeakingOverlay.Value);
 
         Section(defs, "OTHER");
         EnumStep(defs, "Jail Unmute Placement", s.JailUnmuteButtonPlacement, new[] { "Voice HUD", "Meeting Card" });
