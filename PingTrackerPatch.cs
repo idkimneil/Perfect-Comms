@@ -746,6 +746,13 @@ public static class PingTrackerPatch
                 var p = core.position;
                 AccumulateBox(cam, p.x, p.y, coreHalf, coreHalf, depthZ, ref minX, ref maxX, ref minY, ref maxY, ref any);
             }
+            if (slot.LabelTMP != null && slot.LabelWidth > 0.0001f && slot.LabelHeight > 0.0001f)
+            {
+                var lp = slot.LabelTMP.transform.position;
+                float lhw = slot.LabelWidth * 0.5f * rootScale;
+                float lhh = slot.LabelHeight * 0.5f * rootScale;
+                AccumulateBox(cam, lp.x, lp.y, lhw, lhh, depthZ, ref minX, ref maxX, ref minY, ref maxY, ref any);
+            }
         }
         return any;
     }
