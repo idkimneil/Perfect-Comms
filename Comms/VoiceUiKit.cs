@@ -331,6 +331,22 @@ internal static class VoiceUiKit
         return tmp;
     }
 
+    public static RectTransform SectionHeader(string name, RectTransform pane, string content,
+        float paneW, float y, float height)
+    {
+        var rt = Rect("Section_" + name, pane);
+        rt.Anchor(new Vector2(0f, 1f), new Vector2(1f, 1f), new Vector2(0.5f, 1f));
+        rt.sizeDelta = new Vector2(0f, height);
+        rt.anchoredPosition = new Vector2(0f, y);
+
+        var label = Text("SectionLabel", rt, content, 15f, TextMuted, TextAlignmentOptions.Left, FontStyles.Bold);
+        label.characterSpacing = 4f;
+        label.rectTransform.Anchor(new Vector2(0f, 0f), new Vector2(1f, 1f), new Vector2(0f, 0.5f));
+        label.rectTransform.offsetMin = new Vector2(Row.EdgePad, 0f);
+        label.rectTransform.offsetMax = new Vector2(-Row.EdgePad, -2f);
+        return rt;
+    }
+
     public static bool Contains(RectTransform rt)
     {
         if (rt == null) return false;

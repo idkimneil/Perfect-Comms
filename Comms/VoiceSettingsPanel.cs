@@ -11,6 +11,7 @@ public static class VoiceSettingsPanel
     private const float PanelW = 1180f;
     private const float PanelH = 720f;
     private const float RowH = 72f;
+    private const float HeaderH = 42f;
     private const float TopPad = 12f;
 
     private static readonly string[] Categories =
@@ -23,6 +24,7 @@ public static class VoiceSettingsPanel
     private static float _scroll;
     private static float _contentHeight;
     private static float _animT;
+    private static int _visSignature = int.MinValue;
 
     private static bool ShellAlive => _shell != null && _shell.Root != null;
     private static bool _shown;
@@ -59,7 +61,7 @@ public static class VoiceSettingsPanel
         _animT = 1f;
         _shown = true;
 
-        if (!rebuilt) RebuildRows();
+        if (!rebuilt) RebuildRows(true);
 
         VoiceUiKit.RaiseAbove(_shell.RootRect);
     }
@@ -69,8 +71,8 @@ public static class VoiceSettingsPanel
         _shell = new VoiceUiKit.PanelShell("VC_SettingsPanel", "PERFECT COMMS", PanelW, PanelH, HeaderClose);
         _rail = new VoiceUiKit.CategoryRail();
         _rail.Build(_shell.RailRoot, _shell.RailWidth, Categories);
-        _rail.OnSelect = _ => RebuildRows();
-        RebuildRows();
+        _rail.OnSelect = _ => RebuildRows(true);
+        RebuildRows(true);
     }
 
     public static void Hide()
@@ -112,9 +114,10 @@ public static class VoiceSettingsPanel
         _activeRow = null;
         _scroll = 0f;
         _shown = false;
+        _visSignature = int.MinValue;
     }
 
-    private static void RebuildRows()
+    private static void RebuildRows(bool resetScroll)
     {
         if (_shell == null) return;
         VoiceUiKit.RebindRow.CancelCapture();
@@ -122,27 +125,31 @@ public static class VoiceSettingsPanel
             Object.Destroy(_shell.PaneRoot.GetChild(i).gameObject);
         _rows.Clear();
         _activeRow = null;
-        _scroll = 0f;
-        _shell.PaneRoot.anchoredPosition = Vector2.zero;
 
-        var defs = BuildCategory(_rail!.Selected);
+        var visible = CollectVisible(_rail!.Selected);
+
         float y = -TopPad;
-        for (int i = 0; i < defs.Count; i++)
+        for (int i = 0; i < visible.Count; i++)
         {
-            var row = defs[i](_shell.PaneRoot, _shell.PaneWidth, y);
+            var e = visible[i];
+            var row = e.Build(_shell.PaneRoot, _shell.PaneWidth, y);
             if (row != null) _rows.Add(row);
-            if (i < defs.Count - 1)
+            bool nextIsRow = i < visible.Count - 1 && !visible[i + 1].IsHeader;
+            if (!e.IsHeader && nextIsRow)
             {
                 var div = VoiceUiKit.Panel("Div", _shell.PaneRoot, VoiceUiKit.Divider, false);
                 div.rectTransform.Anchor(new Vector2(0f, 1f), new Vector2(1f, 1f), new Vector2(0.5f, 1f));
                 div.rectTransform.sizeDelta = new Vector2(-20f, 1f);
-                div.rectTransform.anchoredPosition = new Vector2(0f, y - RowH + 1f);
+                div.rectTransform.anchoredPosition = new Vector2(0f, y - e.Height + 1f);
             }
-            y -= RowH;
+            y -= e.Height;
         }
-        _contentHeight = TopPad + defs.Count * RowH;
+        _contentHeight = -y;
+        _visSignature = Signature(visible);
 
-        if (defs.Count == 0)
+        ApplyScroll(resetScroll);
+
+        if (visible.Count == 0)
         {
             var empty = VoiceUiKit.Text("Empty", _shell.PaneRoot, "No options", 16f,
                 VoiceUiKit.TextMuted, TMPro.TextAlignmentOptions.Center);
@@ -152,11 +159,20 @@ public static class VoiceSettingsPanel
         }
     }
 
-    private delegate VoiceUiKit.Row? RowDef(RectTransform pane, float paneW, float y);
-
-    private static List<RowDef> BuildCategory(int cat)
+    private sealed class Entry
     {
-        var defs = new List<RowDef>();
+        public string Key = "";
+        public float Height = RowH;
+        public bool IsHeader;
+        public Func<bool> Visible = () => true;
+        public Func<RectTransform, float, float, VoiceUiKit.Row?> Build = (_, _, _) => null;
+    }
+
+    private static readonly Func<bool> Always = () => true;
+
+    private static List<Entry> BuildCategory(int cat)
+    {
+        var defs = new List<Entry>();
         var s = VoiceSettings.Instance!;
         switch (cat)
         {
@@ -169,68 +185,146 @@ public static class VoiceSettingsPanel
         return defs;
     }
 
+    private static List<Entry> CollectVisible(int cat)
+    {
+        var all = BuildCategory(cat);
+        var list = new List<Entry>();
+        for (int i = 0; i < all.Count; i++)
+        {
+            var e = all[i];
+            if (!e.IsHeader && !e.Visible()) continue;
+            list.Add(e);
+        }
+        for (int i = list.Count - 1; i >= 0; i--)
+        {
+            if (!list[i].IsHeader) break;
+            list.RemoveAt(i);
+        }
+        return list;
+    }
+
+    private static int Signature(List<Entry> entries)
+    {
+        int sig = entries.Count;
+        for (int i = 0; i < entries.Count; i++)
+            sig = sig * 31 + entries[i].Key.GetHashCode();
+        return sig;
+    }
+
+    private static void ApplyScroll(bool reset)
+    {
+        float viewH = _shell!.PaneHeight - 24f;
+        float maxScroll = Mathf.Max(0f, _contentHeight - viewH);
+        _scroll = reset ? 0f : Mathf.Clamp(_scroll, 0f, maxScroll);
+        _shell.PaneRoot.anchoredPosition = new Vector2(0f, _scroll);
+    }
+
     private static Func<float, string> Pct => v => $"<color=#22D3EE>{Mathf.RoundToInt(v * 100f)}%</color>";
     private static Func<float, string> Num2 => v => v.ToString("0.00", CultureInfo.InvariantCulture);
 
-    private static void Slider(List<RowDef> defs, string label,
-        BepInEx.Configuration.ConfigEntry<float> entry, Func<float, string> fmt)
+    private static void Section(List<Entry> defs, string title)
+    {
+        defs.Add(new Entry
+        {
+            Key = "##" + title,
+            Height = HeaderH,
+            IsHeader = true,
+            Visible = Always,
+            Build = (pane, paneW, y) =>
+            {
+                VoiceUiKit.SectionHeader(title, pane, title, paneW, y, HeaderH);
+                return null;
+            }
+        });
+    }
+
+    private static void Slider(List<Entry> defs, string label,
+        BepInEx.Configuration.ConfigEntry<float> entry, Func<float, string> fmt, Func<bool>? visible = null)
     {
         var range = GetRange(entry);
-        defs.Add((pane, paneW, y) => new VoiceUiKit.SliderRow(
-            () => entry.Value, v => entry.Value = v, range.x, range.y, fmt)
-            .Build(pane, label, paneW, y, RowH));
+        defs.Add(new Entry
+        {
+            Key = label,
+            Visible = visible ?? Always,
+            Build = (pane, paneW, y) => new VoiceUiKit.SliderRow(
+                () => entry.Value, v => entry.Value = v, range.x, range.y, fmt)
+                .Build(pane, label, paneW, y, RowH)
+        });
     }
 
-    private static void Toggle(List<RowDef> defs, string label,
-        BepInEx.Configuration.ConfigEntry<bool> entry)
+    private static void Toggle(List<Entry> defs, string label,
+        BepInEx.Configuration.ConfigEntry<bool> entry, Func<bool>? visible = null)
     {
-        defs.Add((pane, paneW, y) => new VoiceUiKit.ToggleRow(() => entry.Value, v => entry.Value = v)
-            .Build(pane, label, paneW, y, RowH));
+        defs.Add(new Entry
+        {
+            Key = label,
+            Visible = visible ?? Always,
+            Build = (pane, paneW, y) => new VoiceUiKit.ToggleRow(() => entry.Value, v => entry.Value = v)
+                .Build(pane, label, paneW, y, RowH)
+        });
     }
 
-    private static void EnumStep<TEnum>(List<RowDef> defs, string label,
-        BepInEx.Configuration.ConfigEntry<TEnum> entry, string[] labels) where TEnum : struct, Enum
+    private static void EnumStep<TEnum>(List<Entry> defs, string label,
+        BepInEx.Configuration.ConfigEntry<TEnum> entry, string[] labels, Func<bool>? visible = null)
+        where TEnum : struct, Enum
     {
-        defs.Add((pane, paneW, y) => new VoiceUiKit.StepperRow(
-            () => Convert.ToInt32(entry.Value),
-            i => entry.Value = (TEnum)Enum.ToObject(typeof(TEnum), i),
-            () => labels.Length,
-            i => labels[Mathf.Clamp(i, 0, labels.Length - 1)])
-            .Build(pane, label, paneW, y, RowH));
+        defs.Add(new Entry
+        {
+            Key = label,
+            Visible = visible ?? Always,
+            Build = (pane, paneW, y) => new VoiceUiKit.StepperRow(
+                () => Convert.ToInt32(entry.Value),
+                i => entry.Value = (TEnum)Enum.ToObject(typeof(TEnum), i),
+                () => labels.Length,
+                i => labels[Mathf.Clamp(i, 0, labels.Length - 1)])
+                .Build(pane, label, paneW, y, RowH)
+        });
     }
 
-    private static void BuildAudio(List<RowDef> defs, VoiceChatLocalSettings s)
+    private static void BuildAudio(List<Entry> defs, VoiceChatLocalSettings s)
     {
+        Section(defs, "LEVELS");
         Slider(defs, "Mic Volume", s.MicVolume, Pct);
         Slider(defs, "Mic Sensitivity", s.MicSensitivity, Num2);
         Slider(defs, "Speaker Volume", s.MasterVolume, Pct);
+        Section(defs, "PROCESSING");
         EnumStep(defs, "Mic Mode", s.MicMode, new[] { "Open Mic", "Push To Talk" });
         Toggle(defs, "Noise Suppression", s.NoiseSuppressionEnabled);
         Toggle(defs, "Auto Mic Gain", s.AutoMicGain);
-        Toggle(defs, "Nat Fix", s.NatFix);
         Slider(defs, "Voice Falloff Softness", s.VoiceFalloffSoftness, Pct);
+        Section(defs, "STARTUP");
         Toggle(defs, "Start Muted", s.StartMuted);
         Toggle(defs, "Start Deafened", s.StartDeafened);
     }
 
-    private static void BuildDevices(List<RowDef> defs, VoiceChatLocalSettings s)
+    private static void BuildDevices(List<Entry> defs, VoiceChatLocalSettings s)
     {
         VoiceChatLocalSettings.MaybeRefreshDeviceLists();
 
-        defs.Add((pane, paneW, y) => new VoiceUiKit.StepperRow(
-            () => (int)s.MicrophoneDeviceIndex.Value,
-            i => s.MicrophoneDeviceIndex.Value = (MicDeviceEnum)i,
-            () => VoiceChatLocalSettings.MicDeviceNames.Length,
-            i => DeviceName(VoiceChatLocalSettings.MicDeviceNames, i))
-            .Build(pane, "Microphone", paneW, y, RowH));
+        defs.Add(new Entry
+        {
+            Key = "Microphone",
+            Visible = Always,
+            Build = (pane, paneW, y) => new VoiceUiKit.StepperRow(
+                () => (int)s.MicrophoneDeviceIndex.Value,
+                i => s.MicrophoneDeviceIndex.Value = (MicDeviceEnum)i,
+                () => VoiceChatLocalSettings.MicDeviceNames.Length,
+                i => DeviceName(VoiceChatLocalSettings.MicDeviceNames, i))
+                .Build(pane, "Microphone", paneW, y, RowH)
+        });
 
 #if WINDOWS
-        defs.Add((pane, paneW, y) => new VoiceUiKit.StepperRow(
-            () => (int)s.SpeakerDeviceIndex.Value,
-            i => s.SpeakerDeviceIndex.Value = (SpkDeviceEnum)i,
-            () => VoiceChatLocalSettings.SpkDeviceNames.Length,
-            i => DeviceName(VoiceChatLocalSettings.SpkDeviceNames, i))
-            .Build(pane, "Speaker", paneW, y, RowH));
+        defs.Add(new Entry
+        {
+            Key = "Speaker",
+            Visible = Always,
+            Build = (pane, paneW, y) => new VoiceUiKit.StepperRow(
+                () => (int)s.SpeakerDeviceIndex.Value,
+                i => s.SpeakerDeviceIndex.Value = (SpkDeviceEnum)i,
+                () => VoiceChatLocalSettings.SpkDeviceNames.Length,
+                i => DeviceName(VoiceChatLocalSettings.SpkDeviceNames, i))
+                .Build(pane, "Speaker", paneW, y, RowH)
+        });
 #endif
     }
 
@@ -240,14 +334,19 @@ public static class VoiceSettingsPanel
         return names[Mathf.Clamp(i, 0, names.Length - 1)];
     }
 
-    private static void Rebind(List<RowDef> defs, VoiceKeybind bind)
+    private static void Rebind(List<Entry> defs, VoiceKeybind bind)
     {
-        defs.Add((pane, paneW, y) => new VoiceUiKit.RebindRow(
-            () => bind.CurrentKey, k => bind.Set(k), () => bind.Clear())
-            .Build(pane, bind.DisplayName, paneW, y, RowH));
+        defs.Add(new Entry
+        {
+            Key = bind.DisplayName,
+            Visible = Always,
+            Build = (pane, paneW, y) => new VoiceUiKit.RebindRow(
+                () => bind.CurrentKey, k => bind.Set(k), () => bind.Clear())
+                .Build(pane, bind.DisplayName, paneW, y, RowH)
+        });
     }
 
-    private static void BuildKeybinds(List<RowDef> defs, VoiceChatLocalSettings s)
+    private static void BuildKeybinds(List<Entry> defs, VoiceChatLocalSettings s)
     {
         Rebind(defs, VoiceChatKeybinds.ToggleMute);
         Rebind(defs, VoiceChatKeybinds.PushToTalk);
@@ -260,29 +359,38 @@ public static class VoiceSettingsPanel
         Rebind(defs, VoiceChatKeybinds.HostVoiceRefresh);
     }
 
-    private static void BuildHud(List<RowDef> defs, VoiceChatLocalSettings s)
+    private static void BuildHud(List<Entry> defs, VoiceChatLocalSettings s)
     {
+        Section(defs, "VOICE CONTROLS");
+        EnumStep(defs, "Controls Layout", s.VoiceControlsLayout, new[] { "Vertical", "Horizontal" });
         Slider(defs, "Button Position X", s.ButtonPositionX, Pct);
         Slider(defs, "Button Position Y", s.ButtonPositionY, Pct);
-        EnumStep(defs, "Controls Layout", s.VoiceControlsLayout, new[] { "Vertical", "Horizontal" });
+
+        Section(defs, "SPEAKING BAR");
+        Toggle(defs, "Speaking Bar Manual Layout", s.SpeakingBarManualLayout);
         EnumStep(defs, "Speaking Bar Position", s.SpeakingBarPosition, new[]
         {
             "Top Left", "Top Middle", "Top Right", "Bottom Left", "Bottom Middle", "Bottom Right",
             "Middle Left", "Middle Right"
-        });
-        EnumStep(defs, "Speaking Bar Layout", s.SpeakingBarLayout, new[] { "Vertical", "Horizontal" });
+        }, () => !s.SpeakingBarManualLayout.Value);
+        EnumStep(defs, "Speaking Bar Layout", s.SpeakingBarLayout, new[] { "Vertical", "Horizontal" },
+            () => s.SpeakingBarManualLayout.Value);
+        Slider(defs, "Speaking Bar X", s.SpeakingBarX, Pct, () => s.SpeakingBarManualLayout.Value);
+        Slider(defs, "Speaking Bar Y", s.SpeakingBarY, Pct, () => s.SpeakingBarManualLayout.Value);
         EnumStep(defs, "Speaking Bar Name Pos", s.SpeakingBarNamePosition, new[] { "Bottom", "Top", "Left", "Right" });
-        Toggle(defs, "Speaking Bar Manual Layout", s.SpeakingBarManualLayout);
         Toggle(defs, "Speaking Bar Backdrop", s.SpeakingBarBackdrop);
+
+        Section(defs, "MEETING OVERLAY");
         Toggle(defs, "Meeting Speaking Overlay", s.MeetingSpeakingOverlay);
+        Slider(defs, "Overlay Scale", s.OverlayScale, Num2, () => s.MeetingSpeakingOverlay.Value);
+
+        Section(defs, "OTHER");
         EnumStep(defs, "Jail Unmute Placement", s.JailUnmuteButtonPlacement, new[] { "Voice HUD", "Meeting Card" });
-        Slider(defs, "Speaking Bar X", s.SpeakingBarX, Pct);
-        Slider(defs, "Speaking Bar Y", s.SpeakingBarY, Pct);
-        Slider(defs, "Overlay Scale", s.OverlayScale, Num2);
     }
 
-    private static void BuildAdvanced(List<RowDef> defs, VoiceChatLocalSettings s)
+    private static void BuildAdvanced(List<Entry> defs, VoiceChatLocalSettings s)
     {
+        Toggle(defs, "Nat Fix", s.NatFix);
         Toggle(defs, "Debug Voice Stats", s.DebugVoiceStats);
         Toggle(defs, "Mic Calibration Diagnostics", s.MicCalibrationDiagnostics);
     }
@@ -314,6 +422,16 @@ public static class VoiceSettingsPanel
         HandleScroll();
         HandleInput();
         for (int i = 0; i < _rows.Count; i++) _rows[i].Tick(dt);
+
+        if (Time.frameCount % 20 == 0) RefreshVisibilityIfChanged();
+    }
+
+    private static void RefreshVisibilityIfChanged()
+    {
+        if (_rail == null) return;
+        var visible = CollectVisible(_rail.Selected);
+        if (Signature(visible) == _visSignature) return;
+        RebuildRows(false);
     }
 
     private static void ApplyOpenAnim()
