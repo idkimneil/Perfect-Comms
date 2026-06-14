@@ -593,9 +593,11 @@ internal static class VoiceUiKit
         private const float RowH = 62f;
         private const float ItemH = RowH - 8f;
 
-        public void Build(RectTransform railRoot, float railWidth, string[] labels)
+        public void Build(RectTransform railRoot, float railWidth, string[] labels,
+            (int index, string title)[]? sections = null)
         {
             const float top = -22f;
+            const float sectionGap = 30f;
 
             var hiGlow = GlowImage("RailGlow", railRoot, AccentGlow);
             _highlight = Rect("RailHighlight", railRoot);
@@ -624,6 +626,17 @@ internal static class VoiceUiKit
             float y = top;
             for (int i = 0; i < labels.Length; i++)
             {
+                if (sections != null)
+                {
+                    for (int sidx = 0; sidx < sections.Length; sidx++)
+                    {
+                        if (sections[sidx].index != i) continue;
+                        y -= sectionGap;
+                        BuildSection(railRoot, sections[sidx].title, y + ItemH * 0.5f);
+                        break;
+                    }
+                }
+
                 var rt = Rect("Cat_" + labels[i], railRoot);
                 rt.Anchor(new Vector2(0f, 1f), new Vector2(1f, 1f), new Vector2(0.5f, 1f));
                 rt.sizeDelta = new Vector2(-16f, ItemH);
@@ -682,6 +695,24 @@ internal static class VoiceUiKit
         {
             for (int i = 0; i < _items.Count; i++)
                 _items[i].Label.color = i == _selected ? Accent : TextMuted;
+        }
+
+        private static void BuildSection(RectTransform railRoot, string title, float y)
+        {
+            var div = Rect("RailSectionDiv", railRoot);
+            div.Anchor(new Vector2(0f, 1f), new Vector2(1f, 1f), new Vector2(0.5f, 1f));
+            div.sizeDelta = new Vector2(-32f, 1f);
+            div.anchoredPosition = new Vector2(0f, y + 13f);
+            var divImg = div.gameObject.AddComponent<Image>();
+            divImg.sprite = Solid(Color.white);
+            divImg.color = Divider;
+            divImg.raycastTarget = false;
+
+            var label = Text("RailSectionLabel", railRoot, title, 13f, TextFaint, TextAlignmentOptions.Left, FontStyles.Bold);
+            label.characterSpacing = 4f;
+            label.rectTransform.Anchor(new Vector2(0f, 1f), new Vector2(1f, 1f), new Vector2(0.5f, 1f));
+            label.rectTransform.sizeDelta = new Vector2(-44f, 20f);
+            label.rectTransform.anchoredPosition = new Vector2(22f, y - 4f);
         }
     }
 

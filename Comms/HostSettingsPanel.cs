@@ -13,7 +13,10 @@ public static class HostSettingsPanel
     private const float TopPad = 12f;
 
     private static readonly string[] Categories =
-        { "PROXIMITY", "LOBBY", "VENTS & GHOSTS", "TEAM RADIO", "ROLES" };
+        { "PROXIMITY", "LOBBY", "VENTS & GHOSTS", "TEAM RADIO", "TOU MIRA" };
+
+    private static readonly (int index, string title)[] RailSections =
+        { (4, "MOD BEHAVIOUR") };
 
     private static VoiceUiKit.PanelShell? _shell;
     private static VoiceUiKit.CategoryRail? _rail;
@@ -54,7 +57,7 @@ public static class HostSettingsPanel
         _shell.RootRect.localScale = Vector3.one;
         _scroll = 0f;
         _shell.PaneRoot.anchoredPosition = Vector2.zero;
-        _animT = 1f;
+        _animT = 0f;
         _shown = true;
 
         BuildContent();
@@ -89,7 +92,7 @@ public static class HostSettingsPanel
 
         _hostNotice = false;
         _rail = new VoiceUiKit.CategoryRail();
-        _rail.Build(_shell.RailRoot, _shell.RailWidth, Categories);
+        _rail.Build(_shell.RailRoot, _shell.RailWidth, Categories, RailSections);
         _rail.OnSelect = _ => RebuildRows();
         RebuildRows();
     }
@@ -213,11 +216,12 @@ public static class HostSettingsPanel
             },
             3 => new List<OptionHolder>
             {
-                g.TeamRadio, g.TeamRadioImpostors, g.TeamRadioVampires, g.TeamRadioLovers,
+                g.TeamRadio, g.TeamRadioImpostors,
                 g.TeamRadioInMeetings, g.TeamRadioInTasks
             },
             4 => new List<OptionHolder>
             {
+                g.TeamRadioVampires, g.TeamRadioLovers,
                 r.MuteBlackmailedInMeetings, r.MuteBlackmailedNextRound, r.MuteParasiteControlled,
                 r.ParasiteHearFromVictim, r.MutePuppeteerControlled, r.PuppeteerHearFromVictim,
                 r.MuteSwooperWhileSwooped, r.MuffleBlindedOrFlashedHearing, r.MuffleHypnotizedDuringHysteria,
@@ -241,10 +245,17 @@ public static class HostSettingsPanel
         if (_shell.Root == null) { Destroy(); return; }
         if (!_shown) return;
 
+        if (!VoiceUiKit.RebindRow.IsCapturing && Input.GetKeyDown(KeyCode.Escape))
+        {
+            VoiceUiKit.SwallowClick();
+            Hide();
+            return;
+        }
+
         float dt = Time.deltaTime;
         if (_animT < 1f)
         {
-            _animT = Mathf.Min(1f, _animT + dt / 0.12f);
+            _animT = Mathf.Min(1f, _animT + dt / 0.22f);
             ApplyOpenAnim();
         }
 
@@ -271,10 +282,13 @@ public static class HostSettingsPanel
     private static void ApplyOpenAnim()
     {
         if (_shell == null) return;
-        float e = 1f - (1f - _animT) * (1f - _animT);
-        float scale = Mathf.Lerp(0.97f, 1f, e);
+        float t = _animT;
+        const float c1 = 1.70158f;
+        const float c3 = c1 + 1f;
+        float eased = 1f + c3 * (t - 1f) * (t - 1f) * (t - 1f) + c1 * (t - 1f) * (t - 1f);
+        float scale = Mathf.LerpUnclamped(0.6f, 1f, eased);
         _shell.RootRect.localScale = new Vector3(scale, scale, 1f);
-        _shell.Group.alpha = e;
+        _shell.Group.alpha = Mathf.Clamp01(t / 0.6f);
     }
 
     private static void HandleScroll()

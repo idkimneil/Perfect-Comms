@@ -58,7 +58,7 @@ public static class VoiceSettingsPanel
         _shell.RootRect.localScale = Vector3.one;
         _scroll = 0f;
         _shell.PaneRoot.anchoredPosition = Vector2.zero;
-        _animT = 1f;
+        _animT = 0f;
         _shown = true;
 
         if (!rebuilt) RebuildRows(true);
@@ -264,6 +264,18 @@ public static class VoiceSettingsPanel
         });
     }
 
+    private static void Toggle(List<Entry> defs, string label,
+        Func<bool> get, Action<bool> set, Func<bool>? visible = null)
+    {
+        defs.Add(new Entry
+        {
+            Key = label,
+            Visible = visible ?? Always,
+            Build = (pane, paneW, y) => new VoiceUiKit.ToggleRow(get, set)
+                .Build(pane, label, paneW, y, RowH)
+        });
+    }
+
     private static void EnumStep<TEnum>(List<Entry> defs, string label,
         BepInEx.Configuration.ConfigEntry<TEnum> entry, string[] labels, Func<bool>? visible = null)
         where TEnum : struct, Enum
@@ -367,7 +379,6 @@ public static class VoiceSettingsPanel
         Slider(defs, "Button Position Y", s.ButtonPositionY, Pct);
 
         Section(defs, "SPEAKING BAR");
-        Toggle(defs, "Speaking Bar Manual Layout", s.SpeakingBarManualLayout);
         EnumStep(defs, "Speaking Bar Position", s.SpeakingBarPosition, new[]
         {
             "Top Left", "Top Middle", "Top Right", "Bottom Left", "Bottom Middle", "Bottom Right",
@@ -378,6 +389,7 @@ public static class VoiceSettingsPanel
         Slider(defs, "Speaking Bar X", s.SpeakingBarX, Pct, () => s.SpeakingBarManualLayout.Value);
         Slider(defs, "Speaking Bar Y", s.SpeakingBarY, Pct, () => s.SpeakingBarManualLayout.Value);
         EnumStep(defs, "Speaking Bar Name Pos", s.SpeakingBarNamePosition, new[] { "Bottom", "Top", "Left", "Right" });
+        Toggle(defs, "Speaking Bar Manual Layout", s.SpeakingBarManualLayout);
         Toggle(defs, "Speaking Bar Backdrop", s.SpeakingBarBackdrop);
 
         Section(defs, "MEETING OVERLAY");
@@ -391,8 +403,9 @@ public static class VoiceSettingsPanel
     private static void BuildAdvanced(List<Entry> defs, VoiceChatLocalSettings s)
     {
         Toggle(defs, "Nat Fix", s.NatFix);
-        Toggle(defs, "Debug Voice Stats", s.DebugVoiceStats);
-        Toggle(defs, "Mic Calibration Diagnostics", s.MicCalibrationDiagnostics);
+        Toggle(defs, "Diagnostics",
+            () => s.DebugVoiceStats.Value || s.MicCalibrationDiagnostics.Value,
+            v => { s.DebugVoiceStats.Value = v; s.MicCalibrationDiagnostics.Value = v; });
     }
 
     private static Vector2 GetRange(BepInEx.Configuration.ConfigEntryBase entry)
@@ -409,10 +422,17 @@ public static class VoiceSettingsPanel
         if (_shell.Root == null) { Destroy(); return; }
         if (!_shown) return;
 
+        if (!VoiceUiKit.RebindRow.IsCapturing && Input.GetKeyDown(KeyCode.Escape))
+        {
+            VoiceUiKit.SwallowClick();
+            Hide();
+            return;
+        }
+
         float dt = Time.deltaTime;
         if (_animT < 1f)
         {
-            _animT = Mathf.Min(1f, _animT + dt / 0.12f);
+            _animT = Mathf.Min(1f, _animT + dt / 0.22f);
             ApplyOpenAnim();
         }
 
@@ -437,10 +457,13 @@ public static class VoiceSettingsPanel
     private static void ApplyOpenAnim()
     {
         if (_shell == null) return;
-        float e = 1f - (1f - _animT) * (1f - _animT);
-        float scale = Mathf.Lerp(0.97f, 1f, e);
+        float t = _animT;
+        const float c1 = 1.70158f;
+        const float c3 = c1 + 1f;
+        float eased = 1f + c3 * (t - 1f) * (t - 1f) * (t - 1f) + c1 * (t - 1f) * (t - 1f);
+        float scale = Mathf.LerpUnclamped(0.6f, 1f, eased);
         _shell.RootRect.localScale = new Vector3(scale, scale, 1f);
-        _shell.Group.alpha = e;
+        _shell.Group.alpha = Mathf.Clamp01(t / 0.6f);
     }
 
     private static void HandleScroll()

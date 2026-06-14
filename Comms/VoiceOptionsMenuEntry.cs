@@ -16,6 +16,7 @@ public static class VoiceOptionsMenuEntry
     private static TextMeshProUGUI? _label;
     private static bool _pressedLast;
     private static float _scale = 1f;
+    private static float _appearT = 1f;
 
     [HarmonyPatch(typeof(OptionsMenuBehaviour), nameof(OptionsMenuBehaviour.Start))]
     [HarmonyPostfix]
@@ -23,7 +24,7 @@ public static class VoiceOptionsMenuEntry
     {
         _menu = __instance;
         EnsureButton();
-        if (_button != null) _button.SetActive(true);
+        if (_button != null && !_button.activeSelf) { _appearT = 0f; _button.SetActive(true); }
     }
 
     [HarmonyPatch(typeof(OptionsMenuBehaviour), nameof(OptionsMenuBehaviour.Close))]
@@ -45,7 +46,7 @@ public static class VoiceOptionsMenuEntry
     {
         _menu = menu;
         EnsureButton();
-        if (_button != null && !_button.activeSelf) _button.SetActive(true);
+        if (_button != null && !_button.activeSelf) { _appearT = 0f; _button.SetActive(true); }
     }
 
     private static void EnsureButton()
@@ -130,7 +131,10 @@ public static class VoiceOptionsMenuEntry
             _glow.color = VoiceUiKit.Lerp(_glow.color, g, 0.2f);
         }
         _scale = Mathf.Lerp(_scale, press ? 0.97f : (over ? 1.04f : 1f), 0.25f);
-        _button.transform.localScale = new Vector3(_scale, _scale, 1f);
+        if (_appearT < 1f) _appearT = Mathf.Min(1f, _appearT + Time.deltaTime / 0.2f);
+        float appear = AppearScale(_appearT);
+        float s = _scale * appear;
+        _button.transform.localScale = new Vector3(s, s, 1f);
 
         bool pressed = Input.GetMouseButtonDown(0);
         if (pressed && over && !_pressedLast)
@@ -139,5 +143,13 @@ public static class VoiceOptionsMenuEntry
             catch (Exception e) { VoiceDiagnostics.DebugWarning($"[PerfectComms] Options button open failed: {e.Message}"); }
         }
         _pressedLast = pressed;
+    }
+
+    private static float AppearScale(float t)
+    {
+        const float c1 = 1.70158f;
+        const float c3 = c1 + 1f;
+        float eased = 1f + c3 * (t - 1f) * (t - 1f) * (t - 1f) + c1 * (t - 1f) * (t - 1f);
+        return Mathf.LerpUnclamped(0.6f, 1f, eased);
     }
 }
