@@ -68,7 +68,10 @@ public class VoiceChatRoom
     private const float HostVoiceRefreshApplyCooldownSeconds = 8f;
     private float _lastHostVoiceRefreshRequestTime = -999f;
     private float _lastLocalVoiceRefreshRequestTime = -999f;
-    private static int _nextHostVoiceRefreshNonce;
+    // Seeded randomly per process so two different hosts don't both start at nonce 1. After host migration,
+    // the new host's first refresh would otherwise collide with the old host's nonce 1 and be ignored by
+    // every client as a duplicate — exactly when voice is most likely broken.
+    private static int _nextHostVoiceRefreshNonce = new System.Random().Next(1, int.MaxValue / 2);
     private byte _lastRadioRpcPlayerId = byte.MaxValue;
     private VoiceTeamRadioChannel _lastRadioRpcChannel = VoiceTeamRadioChannel.None;
     private DateTime _lastRadioRpcSentUtc = DateTime.MinValue;

@@ -672,6 +672,7 @@ internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
             if (_waveIn != null)
             {
                 _waveIn.DataAvailable += OnMicrophoneData;
+                _waveIn.RecordingStopped += OnMicrophoneStopped;
                 _waveIn.StartRecording();
             }
 
@@ -708,6 +709,7 @@ internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
         if (waveIn != null)
         {
             try { waveIn.DataAvailable -= OnMicrophoneData; } catch { }
+            try { waveIn.RecordingStopped -= OnMicrophoneStopped; } catch { }
             try { waveIn.StopRecording(); } catch { }
             try { waveIn.Dispose(); } catch { }
         }
@@ -1429,47 +1431,72 @@ internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
             ClearPeers();
             ResetJoinState();
         });
+        // Socket.IO handlers run async-void on a background socket thread; ctx.GetValue<T> throws on a
+        // malformed/hostile server payload. Without a guard that escapes as an unhandled exception and
+        // crashes the process on .NET 6. Each body is wrapped + null-validated so a bad packet is logged and
+        // dropped instead. (signal/clientPeerConfig below already follow this pattern.)
         _socket.On("setClient", async ctx =>
         {
-            var socketId = ctx.GetValue<string>(0);
-            var client = ctx.GetValue<BclClient>(1);
-            _mainThreadActions.Enqueue(() => MapClient(socketId, client));
+            try
+            {
+                var socketId = ctx.GetValue<string>(0);
+                var client = ctx.GetValue<BclClient>(1);
+                if (socketId == null || client == null) return;
+                _mainThreadActions.Enqueue(() => MapClient(socketId, client));
+            }
+            catch (Exception ex) { VoiceDiagnostics.Log("bcl.signal.error", $"event=setClient error=\"{ex.Message}\""); }
             await Task.CompletedTask;
         });
         _socket.On("setClients", async ctx =>
         {
-            var clients = ctx.GetValue<Dictionary<string, BclClient>>(0);
-            _mainThreadActions.Enqueue(() =>
+            try
             {
-                foreach (var sid in SnapshotMappedSocketIds())
-                    if (!clients.ContainsKey(sid)) RemovePeer(sid);
-                foreach (var kv in clients)
+                var clients = ctx.GetValue<Dictionary<string, BclClient>>(0);
+                if (clients == null) return;
+                _mainThreadActions.Enqueue(() =>
                 {
-                    if (MapClient(kv.Key, kv.Value))
+                    foreach (var sid in SnapshotMappedSocketIds())
+                        if (!clients.ContainsKey(sid)) RemovePeer(sid);
+                    foreach (var kv in clients)
                     {
-                        var peer = EnsurePeer(kv.Key);
-                        if (peer != null && ShouldInitiateOffer(kv.Key))
-                            _ = StartOfferAsync(kv.Key);
+                        if (kv.Key == null || kv.Value == null) continue;
+                        if (MapClient(kv.Key, kv.Value))
+                        {
+                            var peer = EnsurePeer(kv.Key);
+                            if (peer != null && ShouldInitiateOffer(kv.Key))
+                                _ = StartOfferAsync(kv.Key);
+                        }
                     }
-                }
-            });
+                });
+            }
+            catch (Exception ex) { VoiceDiagnostics.Log("bcl.signal.error", $"event=setClients error=\"{ex.Message}\""); }
             await Task.CompletedTask;
         });
         _socket.On("join", async ctx =>
         {
-            var socketId = ctx.GetValue<string>(0);
-            var client = ctx.GetValue<BclClient>(1);
-            _mainThreadActions.Enqueue(() =>
+            try
             {
-                if (MapClient(socketId, client) && EnsurePeer(socketId) != null && ShouldInitiateOffer(socketId))
-                    _ = StartOfferAsync(socketId);
-            });
+                var socketId = ctx.GetValue<string>(0);
+                var client = ctx.GetValue<BclClient>(1);
+                if (socketId == null || client == null) return;
+                _mainThreadActions.Enqueue(() =>
+                {
+                    if (MapClient(socketId, client) && EnsurePeer(socketId) != null && ShouldInitiateOffer(socketId))
+                        _ = StartOfferAsync(socketId);
+                });
+            }
+            catch (Exception ex) { VoiceDiagnostics.Log("bcl.signal.error", $"event=join error=\"{ex.Message}\""); }
             await Task.CompletedTask;
         });
         _socket.On("leave", async ctx =>
         {
-            var socketId = ctx.GetValue<string>(0);
-            _mainThreadActions.Enqueue(() => RemovePeer(socketId));
+            try
+            {
+                var socketId = ctx.GetValue<string>(0);
+                if (socketId == null) return;
+                _mainThreadActions.Enqueue(() => RemovePeer(socketId));
+            }
+            catch (Exception ex) { VoiceDiagnostics.Log("bcl.signal.error", $"event=leave error=\"{ex.Message}\""); }
             await Task.CompletedTask;
         });
         _socket.On("signal", async ctx =>
@@ -2856,6 +2883,20 @@ internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
     }
 
 #if WINDOWS
+    // NAudio raises this when capture stops. e.Exception == null is OUR own StopRecording (mute, device
+    // switch, teardown) -> ignore. e.Exception != null is a fault (device unplugged, driver error): the OS
+    // has stopped capturing but _microphoneReady would otherwise stay true, leaving the user shown as live
+    // while transmitting nothing. We only correct that flag here. We deliberately do NOT auto-reopen: we
+    // can't tell "mic broke, want it back" from "unplugged on purpose, done talking", and re-opening could
+    // grab a device the user didn't choose. If they want it back, unmuting or changing the device setting
+    // re-queues capture through the existing QueueMicrophoneTransition paths.
+    private void OnMicrophoneStopped(object? sender, NAudio.Wave.StoppedEventArgs e)
+    {
+        if (e?.Exception == null) return;
+        VoiceDiagnostics.Log("bcl.mic.stopped", $"reason=device-fault error=\"{e.Exception.Message}\" device=\"{_lastMicDeviceName}\"");
+        _microphoneReady = false;
+    }
+
     private void OnMicrophoneData(object? sender, WaveInEventArgs e)
     {
         if (_disposed) return;
