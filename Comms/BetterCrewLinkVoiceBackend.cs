@@ -68,6 +68,11 @@ internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
     private static readonly TimeSpan DuplicateRouteLogInterval = TimeSpan.FromSeconds(2);
     // volatile: reassigned on a background socket callback, read on the main thread.
     private volatile List<RTCIceServer> _iceServers = DefaultIceServers.ToList();
+    // Set once when the room's recovery loop reports repeated total peer failure (peers=0 with remotePlayers>0):
+    // direct/STUN clearly can't connect this client, so escalate to the SAME relay-only path the Wine fix uses.
+    // Latched for the session (we never oscillate direct<->relay). volatile: set on the main thread, read by
+    // ReadIceSettings on the pool-refill ThreadPool thread.
+    private volatile bool _forceRelayEscalated;
     // Pre-built RTCPeerConnections. `new RTCPeerConnection` generates a self-signed DTLS certificate, which
     // costs ~300-500ms in IL2CPP — and it used to run on the Unity main thread (via _mainThreadActions ->
     // MapClient -> EnsurePeer -> WireNewPeerConnection) under _peerSync, freezing rendering AND the audio
@@ -2024,7 +2029,7 @@ internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
 
     // Read the Nat Fix / TURN settings once into locals so the resolved config and its signature are always
     // derived from the SAME snapshot — there is no torn read between "what we built" and "what we stamped".
-    private static void ReadIceSettings(out bool natFix, out string turnUrl, out string turnUser, out string turnCred, out bool forceRelay)
+    private void ReadIceSettings(out bool natFix, out string turnUrl, out string turnUser, out string turnCred, out bool forceRelay)
     {
         natFix = true;
         turnUrl = "turn:turn.bettercrewl.ink:3478";
@@ -2045,6 +2050,21 @@ internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
             }
         }
         catch { /* settings not ready; fall back to defaults (Nat Fix on, relay forced under Wine) */ }
+
+        // Runtime escalation: if direct/STUN repeatedly failed this session, force relay regardless of platform.
+        forceRelay |= _forceRelayEscalated;
+    }
+
+    // Called by the room's recovery loop after repeated TOTAL peer failure (never connected to anyone).
+    // Latches relay-only ICE for the rest of the session and rebuilds the warm pool so the next peer
+    // connections use it. Reuses the exact forceRelay path the Wine fix already validated. Idempotent.
+    public void EscalateToRelayOnly(string reason)
+    {
+        if (_forceRelayEscalated || _disposed) return;
+        _forceRelayEscalated = true;
+        VoiceDiagnostics.Log("bcl.ice.escalate", $"forceRelay=true reason={reason} (repeated direct/STUN failure -> relay-only for session)");
+        DrainPeerConnectionPool();
+        RefillPeerConnectionPool();
     }
 
     // Resolve the ICE configuration AND its signature from one settings snapshot + one read of the (volatile)

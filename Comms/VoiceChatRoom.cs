@@ -810,6 +810,15 @@ public class VoiceChatRoom
         bool didGlobal = false;
         if (finalCollapseAttempt)
         {
+            // Automated relay escalation: if we've never mapped a single peer despite repeated global rebuilds
+            // (remotePlayers exist but mappedPeers==0), direct/STUN ICE is clearly not working for this client
+            // (strict/symmetric NAT, or a Wine box where host-candidate gathering fails). Latch the BCL backend
+            // to relay-only ICE before this rebuild so the fresh peer connections route through TURN. Reuses the
+            // same forceRelay path the Wine fix validated; only fires after total failure, so a client whose
+            // voice already works never reaches here.
+            if (mappedPeers == 0 && remotePlayers > 0 && _globalRebuildAttempts + 1 >= 2)
+                _betterCrewLinkVoice?.EscalateToRelayOnly($"global-attempt-{_globalRebuildAttempts + 1}");
+
             ClearVoiceUiForLifecycleReset("missing peer recovery");
             // Force a full backend rebuild (dispose + reconnect => NEW socket id) rather than the backend's
             // light Rejoin(), which reuses the socket. Both backends need this on a collapse:
