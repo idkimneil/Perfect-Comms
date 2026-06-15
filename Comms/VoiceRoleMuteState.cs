@@ -170,8 +170,12 @@ internal static partial class VoiceRoleMuteState
     internal static bool IsLocalListenerAudioMuffled()
     {
         var settings = VoiceRoomSettingsState.Current;
-        return settings.MuffleBlindedOrFlashedHearing && IsLocalListenerBlindedOrFlashed() ||
-               settings.MuffleHypnotizedDuringHysteria && IsLocalListenerHypnotizedDuringHysteria();
+        if (settings.MuffleBlindedOrFlashedHearing && IsLocalListenerBlindedOrFlashed() ||
+            settings.MuffleHypnotizedDuringHysteria && IsLocalListenerHypnotizedDuringHysteria())
+            return true;
+
+        // Third-party mod listener filters (PerfectComms.Api Primitive: RegisterListenerFilter).
+        return VoiceModRegistry.LocalListenerMuffled(PlayerControl.LocalPlayer);
     }
 
     internal static VoiceProximityResult ApplyLocalListenerAudioMuffle(VoiceProximityResult result)
@@ -196,6 +200,17 @@ internal static partial class VoiceRoleMuteState
         var local = PlayerControl.LocalPlayer;
         if (local == null || IsVoiceDead(local))
             return false;
+
+        // Third-party mod gate (PerfectComms.Api): mute my own mic if any registered rule or a
+        // phase-scoped global gate says so. Runs only in voice-active phases.
+        if (VoiceSceneState.IsMeetingVoicePhase(phase) || VoiceSceneState.IsTaskVoicePhase(phase))
+        {
+            if (VoiceModRegistry.LocalGate(local, VoiceModBridge.ToApiPhase(phase), isDead: false, out var modReason))
+            {
+                reason = string.IsNullOrEmpty(modReason) ? "Role Muted" : modReason;
+                return true;
+            }
+        }
 
         GetPlayerRoleState(local, out bool isBlackmailed, out bool isJailed, out byte jailorId,
             out bool isParasiteControlled, out bool isPuppeteerControlled, out bool isCrewpostor,
@@ -281,6 +296,9 @@ internal static partial class VoiceRoleMuteState
         if (!VoiceSceneState.IsMeetingVoicePhase(phase) || player.IsDead)
             return false;
 
+        if (player.External.Muted)
+            return true;
+
         var state = new CachedRoleState(
             player.IsBlackmailed,
             player.IsJailed,
@@ -311,6 +329,9 @@ internal static partial class VoiceRoleMuteState
         if (!VoiceSceneState.IsMeetingVoicePhase(phase))
             return VoiceProximityReason.MeetingLiving;
 
+        if (player.External.Muted)
+            return VoiceProximityReason.RoleMuted;
+
         var state = new CachedRoleState(
             player.IsBlackmailed,
             player.IsJailed,
@@ -340,6 +361,9 @@ internal static partial class VoiceRoleMuteState
         if (player.IsDead)
             return false;
 
+        if (player.External.Muted)
+            return true;
+
         var state = new CachedRoleState(
             player.IsBlackmailed,
             player.IsJailed,
@@ -364,6 +388,9 @@ internal static partial class VoiceRoleMuteState
 
     internal static VoiceProximityReason GetTaskBlockReason(VoicePlayerSnapshot player)
     {
+        if (player.External.Muted)
+            return VoiceProximityReason.RoleMuted;
+
         var state = new CachedRoleState(
             player.IsBlackmailed,
             player.IsJailed,
@@ -763,6 +790,7 @@ internal static partial class VoiceRoleMuteState
             VoiceProximityReason.PuppeteerControlled => "Puppeteer Controlled",
             VoiceProximityReason.Swooped => "Swooped",
             VoiceProximityReason.GlitchHacked => "Glitch Hacked",
+            VoiceProximityReason.RoleMuted => "Role Muted",
             _ => "Role Muted",
         };
 

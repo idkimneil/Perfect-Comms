@@ -86,6 +86,38 @@ internal static class VoiceRoomSettingsRpc
         writer.Write(settings.TeamRadioInTasks);
         writer.Write(settings.GhostsHearEachOtherUnlimited);
         writer.Write(settings.JailPersistsAfterJailorDeath);
+        WriteModOptions(writer);
+    }
+
+    // Trailing variable-length block of third-party mod host-option values (PerfectComms.Api
+    // Primitive 4). Hash-keyed so adding mod options never shifts the fixed offsets above; legacy
+    // readers that stop before this block simply keep their defaults. count, then per entry:
+    // (keyHash:int, isEnum:bool, value:int).
+    private static void WriteModOptions(MessageWriter writer)
+    {
+        var entries = new System.Collections.Generic.List<(int Hash, bool IsEnum, int Value)>(
+            VoiceModRegistry.SyncedValues());
+        writer.Write(entries.Count);
+        foreach (var e in entries)
+        {
+            writer.Write(e.Hash);
+            writer.Write(e.IsEnum);
+            writer.Write(e.Value);
+        }
+    }
+
+    private static void ReadModOptions(MessageReader reader)
+    {
+        if (reader.BytesRemaining < 4) return; // legacy snapshot ended before this block
+        int count = reader.ReadInt32();
+        for (int i = 0; i < count; i++)
+        {
+            if (reader.BytesRemaining < 9) break; // int + bool + int
+            int hash = reader.ReadInt32();
+            bool isEnum = reader.ReadBoolean();
+            int value = reader.ReadInt32();
+            VoiceModRegistry.ApplySyncedValue(hash, isEnum, value);
+        }
     }
 
     private static VoiceRoomSettingsSnapshot ReadSettings(MessageReader reader)
@@ -127,6 +159,7 @@ internal static class VoiceRoomSettingsRpc
         bool mutePuppeteerControlled = reader.ReadBoolean();
         bool crewpostorUsesImpostorVoice = reader.ReadBoolean();
         bool muteSwooperWhileSwooped = reader.BytesRemaining > 0 ? reader.ReadBoolean() : defaults.MuteSwooperWhileSwooped;
+        VoiceRoomSettingsSnapshot clamped;
         int mediumGhostVoice = reader.BytesRemaining >= 4 ? reader.ReadInt32() : defaults.MediumGhostVoice;
         bool muteGlitchHacked = reader.BytesRemaining > 0 ? reader.ReadBoolean() : defaults.MuteGlitchHacked;
         bool muffleBlindedOrFlashedHearing = reader.BytesRemaining > 0 ? reader.ReadBoolean() : defaults.MuffleBlindedOrFlashedHearing;
@@ -139,7 +172,7 @@ internal static class VoiceRoomSettingsRpc
         bool ghostsHearEachOtherUnlimited = reader.BytesRemaining > 0 ? reader.ReadBoolean() : defaults.GhostsHearEachOtherUnlimited;
         bool jailPersistsAfterJailorDeath = reader.BytesRemaining > 0 ? reader.ReadBoolean() : defaults.JailPersistsAfterJailorDeath;
 
-        return new VoiceRoomSettingsSnapshot(
+        clamped = new VoiceRoomSettingsSnapshot(
             backend,
             backendServerUrl,
             maxChatDistance,
@@ -177,6 +210,8 @@ internal static class VoiceRoomSettingsRpc
             teamRadioInTasks,
             ghostsHearEachOtherUnlimited,
             jailPersistsAfterJailorDeath).Clamp();
+        ReadModOptions(reader);
+        return clamped;
     }
 
     [HarmonyPatch(typeof(PlayerControl), nameof(PlayerControl.HandleRpc))]

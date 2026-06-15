@@ -13,11 +13,25 @@ public static class HostSettingsPanel
     private const float RowH = 70f;
     private const float TopPad = 12f;
 
-    private static readonly string[] Categories =
+    private static readonly string[] BuiltInCategories =
         { "PROXIMITY", "LOBBY", "VENTS & GHOSTS", "TEAM RADIO", "TOU MIRA" };
 
     private static readonly (int index, string title)[] RailSections =
         { (4, "MOD BEHAVIOUR") };
+
+    // Built-in tabs plus one tab per third-party mod (PerfectComms.Api Primitive 5), appended in
+    // registration order under the "MOD BEHAVIOUR" section that already precedes index 4.
+    private static string[] Categories
+    {
+        get
+        {
+            var tabs = VoiceModRegistry.Tabs;
+            if (tabs.Count == 0) return BuiltInCategories;
+            var list = new System.Collections.Generic.List<string>(BuiltInCategories);
+            for (int i = 0; i < tabs.Count; i++) list.Add(tabs[i].Label.ToUpperInvariant());
+            return list.ToArray();
+        }
+    }
 
     private static VoiceUiKit.PanelShell? _shell;
     private static VoiceUiKit.CategoryRail? _rail;
@@ -171,6 +185,9 @@ public static class HostSettingsPanel
             case ToggleHolder t:
                 return new VoiceUiKit.ToggleRow(() => t.Value, v => t.Value = v)
                     .Build(_shell.PaneRoot, t.Label, paneW, y, RowH);
+            case ModToggleHolder mt:
+                return new VoiceUiKit.ToggleRow(() => mt.Value, v => mt.Value = v)
+                    .Build(_shell.PaneRoot, mt.Label, paneW, y, RowH);
             case EnumHolder e:
                 return new VoiceUiKit.StepperRow(
                     () => e.Value,
@@ -178,6 +195,13 @@ public static class HostSettingsPanel
                     () => e.Labels.Length,
                     i => e.Labels[Mathf.Clamp(i, 0, e.Labels.Length - 1)])
                     .Build(_shell.PaneRoot, e.Label, paneW, y, RowH);
+            case ModEnumHolder me:
+                return new VoiceUiKit.StepperRow(
+                    () => me.Value,
+                    i => me.Value = i,
+                    () => me.Labels.Length,
+                    i => me.Labels[Mathf.Clamp(i, 0, me.Labels.Length - 1)])
+                    .Build(_shell.PaneRoot, me.Label, paneW, y, RowH);
             case NumberHolder n:
                 return new VoiceUiKit.SliderRow(
                     () => n.Value, v => n.Value = v, n.Min, n.Max,
@@ -231,7 +255,8 @@ public static class HostSettingsPanel
                 r.JailPersistsAfterJailorDeath, r.JailorCanUnmuteJailed, r.MediumGhostVoice,
                 g.TeamRadioVampires, g.TeamRadioLovers
             },
-            _ => new List<OptionHolder>()
+            // Built-in tabs are indices 0..4; everything past that is a registered mod tab.
+            _ => VoiceModRegistry.HoldersForTab(cat - BuiltInCategories.Length)
         };
     }
 

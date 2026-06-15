@@ -2,15 +2,23 @@ using UnityEngine;
 
 namespace VoiceChatPlugin.VoiceChat;
 
-// How the LOCAL player's proximity-hearing origin is affected by a Town of Us control ability they are using.
-//   None             — normal: hear from your own body.
-//   PuppeteerSwap    — Puppeteer drives the victim (own body frozen): hear ENTIRELY from the victim's surroundings.
-//   ParasiteAdditive — Parasite plays normally but ALSO hears the infected victim's surroundings (union, louder wins).
+// How the LOCAL player's proximity-hearing origin is relocated this frame.
+//   None             - normal: hear from your own body.
+//   PuppeteerSwap    - TOU Puppeteer drives the victim (own body frozen): hear ENTIRELY from the
+//                      victim's surroundings. Gated on the built-in PuppeteerHearFromVictim host toggle.
+//   ParasiteAdditive - TOU Parasite hears its own body AND the victim's surroundings (union, louder
+//                      wins). Gated on the built-in ParasiteHearFromVictim host toggle.
+//   ExternalReplace  - PerfectComms.Api listener-origin override (Replace). Hear ENTIRELY from the
+//                      override position. NOT gated on any built-in/TOU toggle - works standalone.
+//   ExternalAdditive - PerfectComms.Api listener-origin override (Additive). Hear from own body AND
+//                      the override position. NOT gated on any built-in/TOU toggle.
 internal enum VoiceControlHearingMode
 {
     None = 0,
     PuppeteerSwap = 1,
     ParasiteAdditive = 2,
+    ExternalReplace = 3,
+    ExternalAdditive = 4,
 }
 
 internal readonly record struct VoicePlayerSnapshot(
@@ -44,4 +52,7 @@ internal readonly record struct VoicePlayerSnapshot(
     // Local-player-only control-hearing fields (default None/zero for everyone else).
     VoiceControlHearingMode ControlHearingMode,
     Vector2 ControlledVictimPosition,
-    float ControlledVictimLightRadius);
+    float ControlledVictimLightRadius,
+    // Third-party mod voice state (PerfectComms.Api), resolved once per player in the snapshot
+    // builder. One bundled field keeps the API isolated from the core snapshot shape.
+    ExternalVoiceState External = default);

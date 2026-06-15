@@ -21,6 +21,8 @@ internal static class VoiceSnapshotBuilder
         Vector2? localPosition = local != null ? (Vector2)local.transform.position : null;
         int mapId = ResolveMapId();
         var cameraView = ResolveCameraView(local, mapId);
+        var phase = VoiceSceneState.ResolvePhase();
+        var apiPhase = VoiceModBridge.ToApiPhase(phase);
 
         // Resolve once: is the LOCAL player controlling a victim (Puppeteer/Parasite)? Used to relocate/augment
         // their proximity hearing to the victim's surroundings when the host has the matching toggle on.
@@ -38,6 +40,26 @@ internal static class VoiceSnapshotBuilder
             catch
             {
                 localControlMode = VoiceControlHearingMode.None;
+            }
+        }
+
+        // Third-party mod listener-origin override (PerfectComms.Api Primitive 3). Reuses the
+        // control-hearing fields/branch already consumed by the calculator. A built-in TOU control
+        // takes precedence; the override only applies when no built-in control hearing is active.
+        ExternalVoiceState localExternal = ExternalVoiceState.None;
+        if (local != null)
+        {
+            localExternal = VoiceModRegistry.ResolvePlayer(local, apiPhase, isLocal: true,
+                isDead: local.Data?.IsDead == true);
+            if (localControlMode == VoiceControlHearingMode.None && localExternal.ListenerActive)
+            {
+                localControlledVictimPos = localExternal.ListenerOrigin;
+                localControlledVictimLight = localExternal.ListenerLightRadius;
+                // Use the External* modes so the calculator applies them unconditionally, without
+                // gating on the TOU-specific PuppeteerHearFromVictim/ParasiteHearFromVictim toggles.
+                localControlMode = localExternal.ListenerReplace
+                    ? VoiceControlHearingMode.ExternalReplace
+                    : VoiceControlHearingMode.ExternalAdditive;
             }
         }
 
@@ -104,7 +126,10 @@ internal static class VoiceSnapshotBuilder
                 mediatingMediumId,
                 player.PlayerId == localPlayerId ? localControlMode : VoiceControlHearingMode.None,
                 player.PlayerId == localPlayerId ? localControlledVictimPos : default,
-                player.PlayerId == localPlayerId ? localControlledVictimLight : -1f));
+                player.PlayerId == localPlayerId ? localControlledVictimLight : -1f,
+                player.PlayerId == localPlayerId
+                    ? localExternal
+                    : VoiceModRegistry.ResolvePlayer(player, apiPhase, isLocal: false, isDead: dataDead || roleOnlyDead)));
         }
         }
         catch
@@ -115,7 +140,7 @@ internal static class VoiceSnapshotBuilder
         ApplyLoverPairingFallback(players);
 
         return new VoiceGameStateSnapshot(
-            VoiceSceneState.ResolvePhase(),
+            phase,
             mapId,
             localClientId,
             ResolveHostClientId(),

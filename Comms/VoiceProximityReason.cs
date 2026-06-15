@@ -18,6 +18,8 @@ internal enum VoiceProximityReason
     PuppeteerControlled,
     Swooped,
     GlitchHacked,
+    RoleMuted,
+    ModChannel,
     MeetingLiving,
     TeamRadio,
     TeamRadioMuted,

@@ -58,6 +58,7 @@ public class VoiceChatRoom
     private InterstellarVoiceBackend? _interstellarVoice;
     private BetterCrewLinkVoiceBackend? _betterCrewLinkVoice;
     private VoiceRoomSettingsSnapshot? _lastSentHostSettings;
+    private int _lastSentModOptionRevision = -1;
     private DateTime _lastSentHostSettingsUtc = DateTime.MinValue;
     private const double MinHostSettingsSnapshotIntervalSeconds = 1.0;
     private DateTime _lastHostSettingsRequestUtc = DateTime.MinValue;
@@ -530,9 +531,12 @@ public class VoiceChatRoom
         if (!IsLocalHost() || _voiceBackend == null) return;
 
         var settings = VoiceRoomSettingsSnapshot.FromGameOptions();
+        int modRevision = VoiceModRegistry.OptionRevision;
         if (!force)
         {
-            if (_lastSentHostSettings.HasValue && _lastSentHostSettings.Value.Equals(settings))
+            // Re-broadcast when either the core settings OR any third-party mod host-option changed.
+            if (_lastSentHostSettings.HasValue && _lastSentHostSettings.Value.Equals(settings)
+                && _lastSentModOptionRevision == modRevision)
                 return;
             if ((DateTime.UtcNow - _lastSentHostSettingsUtc).TotalSeconds < MinHostSettingsSnapshotIntervalSeconds)
                 return;
@@ -542,6 +546,7 @@ public class VoiceChatRoom
         // sender id would let any peer forge host voice settings.
         VoiceRoomSettingsRpc.SendSnapshot(settings);
         _lastSentHostSettings = settings;
+        _lastSentModOptionRevision = modRevision;
         _lastSentHostSettingsUtc = DateTime.UtcNow;
         VoiceDiagnostics.Log("settings.sent", $"kind=host-snapshot transport={_activeBackend} rpc=true");
     }
