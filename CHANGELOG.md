@@ -13,9 +13,9 @@ Perfect Comms is now fully standalone: no Reactor or MiraAPI required. This rele
   > <sub>Client settings open from the Among Us Options menu (or press F10); host voice settings open from the lobby game-settings console (or press F11). Settings are grouped into clear sections with the more advanced options tucked away. This replaces the previous MiraAPI settings tab, all the same voice and role rules are now here.</sub>
 
 - **Fully rebindable keyboard and mouse controls.**
-  > <sub>Every voice keybind can be rebound to any keyboard key or mouse button, including MB4 and MB5. Existing keybinds reset to their defaults once because of the new binding system.</sub>
+  > <sub>Every voice keybind can be rebound to any keyboard key or mouse button, including MB4 and MB5. Existing keybinds reset to their defaults **once** because of the new binding system.</sub>
 
-- **Hardware-grade echo cancellation.**
+- **Hardware echo cancellation.**
   > <sub>A new native acoustic echo canceller in the mic pipeline, with an Echo Cancellation toggle under Noise Suppression, stops the game and other players echoing back through your mic.</sub>
 
 - **New host options.**
@@ -28,7 +28,7 @@ Perfect Comms is now fully standalone: no Reactor or MiraAPI required. This rele
   > <sub>Fixed left/right stereo drifting apart, smoother voice on bursty connections, faster recovery for stuck players, and a push-to-talk indicator that always releases when you stop talking.</sub>
 
 - **Public mod-integration API (`PerfectComms.Api`).**
-  > <sub>Other mods can now register custom voice behaviours as a soft dependency — no forking required. The API exposes five primitives: **Gate** (mute or muffle a player or the whole lobby for any phase), **Channel** (put players into a shared private or team audio channel with custom shape and volume), **Listener Origin** (relocate where the local player hears from), **Host Options** (declare synced toggles and enums that appear in the host settings panel), and **Mod Tab** (add your own section under MOD BEHAVIOUR in the host panel). All callbacks are fail-closed and isolated; a throwing or missing mod has no effect on voice. Full guide and API reference on the [wiki](https://github.com/artriy/Perfect-Comms/wiki/Mod-Integration).</sub>
+  > <sub>Other mods can register custom voice behaviours as a soft dependency, no forking required: gates (mute/muffle), channels (private/team audio), listener origin, host options, and a host-panel tab. Callbacks are fail-closed, so a broken or missing mod has no effect on voice. Full guide and reference on the [wiki](https://github.com/artriy/Perfect-Comms/wiki/Mod-Integration).</sub>
 
 ## Perfect Comms v2.1.7
 
