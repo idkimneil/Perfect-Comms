@@ -6,7 +6,7 @@
 
 <p align="center">
   <a href="https://github.com/artriy/Perfect-Comms/releases/latest"><img src="https://img.shields.io/github/v/release/artriy/Perfect-Comms?style=for-the-badge&label=Latest&color=C51111&cacheSeconds=21600" alt="Latest release"></a>
-  <a href="https://github.com/artriy/Perfect-Comms/releases"><img src="https://img.shields.io/github/downloads/artriy/Perfect-Comms/total?style=for-the-badge&label=Downloads&color=24C8DB&cacheSeconds=21600" alt="Total downloads"></a>
+  <a href="https://github.com/artriy/Perfect-Comms/releases"><img src="https://img.shields.io/endpoint?style=for-the-badge&url=https%3A%2F%2Fraw.githubusercontent.com%2Fartriy%2FPerfect-Comms%2Fmain%2F.github%2Fbadges%2Fdownloads.json" alt="Total downloads"></a>
 </p>
 
 <p align="center">
