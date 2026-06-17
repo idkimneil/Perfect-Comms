@@ -39,6 +39,7 @@ internal sealed class BclVoiceMixer
         public float CurLeft;
         public float CurRight;
         public bool Primed;
+        public bool EverPrimed;
         public int FadeRemaining;
         public DateTime PrimeDeadline;
         public VoiceAudioFilterMode Mode;
@@ -80,7 +81,7 @@ internal sealed class BclVoiceMixer
                     PrimeLocked(p);
                 return;
             }
-            if (!p.Primed && p.PrimeDeadline == DateTime.MinValue)
+            if (!p.Primed && !p.EverPrimed && p.PrimeDeadline == DateTime.MinValue)
                 p.PrimeDeadline = DateTime.UtcNow.AddMilliseconds(MaxWaitMs);
             var len = p.Ring.Length;
             for (var i = 0; i < count; i++)
@@ -94,7 +95,7 @@ internal sealed class BclVoiceMixer
                 p.Write = (p.Write + 1) % len;
                 p.Count++;
             }
-            if (!p.Primed && p.Count >= PrimeSamples)
+            if (!p.Primed && (p.EverPrimed || p.Count >= PrimeSamples))
                 PrimeLocked(p);
         }
     }
@@ -304,6 +305,7 @@ internal sealed class BclVoiceMixer
     private void PrimeLocked(Peer p)
     {
         p.Primed = true;
+        p.EverPrimed = true;
         p.PrimeDeadline = DateTime.MinValue;
         p.FadeRemaining = FadeSamples;
         _diagPrimes++;
