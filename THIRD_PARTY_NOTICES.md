@@ -1,7 +1,7 @@
 # Third-Party Notices
 
 Perfect Comms embeds the following third-party native libraries as assembly resources and extracts them at
-runtime (Windows x64 only). Their licenses are reproduced or referenced below.
+runtime (Windows, x64 and x86). Their licenses are reproduced or referenced below.
 
 ## BASS / BASS_FX (audio I/O) — PROPRIETARY, see license terms
 
@@ -15,7 +15,7 @@ runtime (Windows x64 only). Their licenses are reproduced or referenced below.
 
 ## libopus 1.6.1 (voice codec, with DRED + deep PLC + OSCE)
 
-- Files: `Libs/opus.x64.dll`
+- Files: `Libs/opus.x64.dll`, `Libs/opus.x86.dll`
 - Upstream: https://github.com/xiph/opus, tag `v1.6.1` (commit `22244de5a79bd1d6d623c32e72bf1954b56235be`)
 - License: BSD 3-Clause (Xiph.org Foundation). Full text in `Libs/opus.COPYING`.
 - Build recipe: `Libs/opus-build.md`. The embedded DNN model data is the official Xiph model fetched by the
@@ -23,7 +23,7 @@ runtime (Windows x64 only). Their licenses are reproduced or referenced below.
 
 ## DeepFilterNet 3 / libDF (noise suppression)
 
-- Files: `Libs/df.x64.dll`
+- Files: `Libs/df.x64.dll`, `Libs/df.x86.dll`
 - Upstream: https://github.com/Rikorose/DeepFilterNet (commit `d375b2d8309e0935d165700c91da9de862a99c31`)
 - License: dual MIT OR Apache-2.0. Full text in `Libs/df.COPYING`.
 - The default DeepFilterNet 3 model (author: Hendrik Schroeter / Rikorose) is compiled into the cdylib via the

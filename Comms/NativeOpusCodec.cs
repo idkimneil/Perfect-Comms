@@ -73,7 +73,8 @@ internal static unsafe class OpusNative
     public static DecoderDredDecode OpusDecoderDredDecode { get; private set; } = null!;
 
     private const string NativeFileName = "opus.dll";
-    private const string ResourceName = "Lib.opus.x64.dll";
+    private static string ResourceName => Environment.Is64BitProcess ? "Lib.opus.x64.dll" : "Lib.opus.x86.dll";
+    private static string ArchitectureLabel => Environment.Is64BitProcess ? "x64" : "x86";
     private static readonly object LoadLock = new();
     private static bool _loaded;
     private static IntPtr _handle;
@@ -108,7 +109,7 @@ internal static unsafe class OpusNative
         => Marshal.GetDelegateForFunctionPointer<T>(NativeLibrary.GetExport(_handle, name));
 
     private static string ExtractNativeLibrary()
-        => NativeLibraryCache.Extract(Assembly.GetExecutingAssembly(), ResourceName, NativeFileName, "x64", ResolveBaseDirectory());
+        => NativeLibraryCache.Extract(Assembly.GetExecutingAssembly(), ResourceName, NativeFileName, ArchitectureLabel, ResolveBaseDirectory());
 
     private static string ResolveBaseDirectory()
     {

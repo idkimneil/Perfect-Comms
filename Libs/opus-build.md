@@ -39,3 +39,22 @@ Copy `build/libopus.dll` to `PerfectComms/Libs/opus.x64.dll`. It is embedded via
 
 Verify the DRED API is exported: `objdump -p opus.x64.dll | grep -i dred` should list `opus_dred_decoder_create`,
 `opus_dred_parse`, `opus_decoder_dred_decode`.
+
+## 32-bit (x86) build -> opus.x86.dll
+
+Steam's Among Us is a 32-bit (IL2CPP i386) process, so it needs the x86 DLL. Build with an i686 mingw-w64
+toolchain (e.g. WinLibs `winlibs-i686-posix-dwarf-gcc-*`). The i686 dwarf runtime otherwise links
+`libgcc_s_dw2-1.dll` + `libssp-0.dll`, which are absent on a normal Windows box, so add `-static` to fold
+them into the DLL:
+
+```
+cmake -B build32 -G "Ninja" -DCMAKE_C_COMPILER=<i686-bin>/gcc.exe -DCMAKE_BUILD_TYPE=Release \
+      -DCMAKE_SHARED_LINKER_FLAGS="-static -static-libgcc" \
+      -DOPUS_BUILD_SHARED_LIBRARY=ON -DOPUS_BUILD_PROGRAMS=OFF -DOPUS_BUILD_TESTING=OFF \
+      -DOPUS_DRED=ON -DOPUS_DEEP_PLC=ON -DOPUS_OSCE=ON
+cmake --build build32 -j
+strip -s build32/libopus.dll
+```
+
+Copy `build32/libopus.dll` to `PerfectComms/Libs/opus.x86.dll` (logical name `Lib.opus.x86.dll`).
+`objdump -p opus.x86.dll | grep "DLL Name"` should show only `KERNEL32`, `ADVAPI32`, and `api-ms-win-crt-*`.

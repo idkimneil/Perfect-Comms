@@ -14,7 +14,8 @@ namespace VoiceChatPlugin.Audio;
 internal sealed unsafe class DeepFilterDenoiser : INoiseSuppressor
 {
     private const string NativeFileName = "df.dll";
-    private const string ResourceName = "Lib.df.x64.dll";
+    private static string ResourceName => Environment.Is64BitProcess ? "Lib.df.x64.dll" : "Lib.df.x86.dll";
+    private static string ArchitectureLabel => Environment.Is64BitProcess ? "x64" : "x86";
     private const float AttenLimitDb = 100f; // upper bound on attenuation; the model decides how much to remove
 
     private static readonly object LoadLock = new();
@@ -172,7 +173,7 @@ internal sealed unsafe class DeepFilterDenoiser : INoiseSuppressor
         => Marshal.GetDelegateForFunctionPointer<T>(NativeLibrary.GetExport(_nativeHandle, name));
 
     private static string ExtractNativeLibrary()
-        => NativeLibraryCache.Extract(Assembly.GetExecutingAssembly(), ResourceName, NativeFileName, "x64", ResolveBaseDirectory());
+        => NativeLibraryCache.Extract(Assembly.GetExecutingAssembly(), ResourceName, NativeFileName, ArchitectureLabel, ResolveBaseDirectory());
 
     private static string ResolveBaseDirectory()
     {

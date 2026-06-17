@@ -45,3 +45,21 @@ Copy `df.dll` to `PerfectComms/Libs/df.x64.dll`. It is embedded via `<EmbeddedRe
 
 Verify the C API is exported: `objdump -p df.x64.dll | grep df_` should list `df_create`,
 `df_get_frame_length`, `df_process_frame`, `df_free`.
+
+## 32-bit (x86) build -> df.x86.dll
+
+Steam's Among Us is a 32-bit process, so it needs the x86 cdylib. Add the Rust target and an i686 mingw-w64
+toolchain (WinLibs `winlibs-i686-posix-dwarf-gcc-*`) for the linker, and force `crt-static` so the DLL does
+not depend on `libgcc_s_dw2-1.dll`/`libwinpthread`:
+
+```
+rustup target add i686-pc-windows-gnu
+export PATH="<i686-bin>:$PATH"
+export CARGO_TARGET_I686_PC_WINDOWS_GNU_LINKER="<i686-bin>/i686-w64-mingw32-gcc.exe"
+export RUSTFLAGS="-C target-feature=+crt-static"
+cargo build --release --no-default-features --features capi -p deep_filter --target i686-pc-windows-gnu
+strip -s target/i686-pc-windows-gnu/release/df.dll
+```
+
+Copy to `PerfectComms/Libs/df.x86.dll` (logical name `Lib.df.x86.dll`). `objdump -p df.x86.dll | grep "DLL Name"`
+should show only Windows system DLLs (KERNEL32/NTDLL/ADVAPI32/bcrypt/userenv/ws2_32 + `api-ms-win-crt-*`).
