@@ -36,7 +36,6 @@ internal static class BassRuntime
     {
         if (_nativeLoaded) return;
         _nativeHandle = NativeLibrary.Load(ExtractNativeLibrary($"Lib.bass.{ArchitectureLabel}.dll", "bass.dll"));
-        NativeLibrary.Load(ExtractNativeLibrary($"Lib.bass_fx.{ArchitectureLabel}.dll", "bass_fx.dll"));
         _nativeLoaded = true;
     }
 

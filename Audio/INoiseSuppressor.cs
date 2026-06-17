@@ -2,8 +2,8 @@ using System;
 
 namespace VoiceChatPlugin.Audio;
 
-// Common surface for the native noise suppressors so MicPreprocessor can hold either one. Windows uses
-// DeepFilterDenoiser (DeepFilterNet 3); other platforms use RnNoiseSuppressor.
+// Surface for the native noise suppressor so MicPreprocessor can hold it behind a platform-neutral type
+// (the concrete DeepFilterDenoiser is Windows-only). Non-Windows builds currently have no native suppressor.
 internal interface INoiseSuppressor : IDisposable
 {
     int FrameSize { get; }

@@ -204,9 +204,6 @@ internal sealed class MicPreprocessor : IDisposable
         {
 #if WINDOWS
             if (!DeepFilterDenoiser.TryCreate(out var suppressor, out var error))
-#else
-            if (!RnNoiseSuppressor.TryCreate(out var suppressor, out var error))
-#endif
             {
                 SetNoiseSuppressionState("unavailable", error, null);
                 TrackNoiseSuppressionFrame(false, 0, true, count, inputPeak, inputSquareSum, inputPeak, inputSquareSum, 0f);
@@ -215,6 +212,12 @@ internal sealed class MicPreprocessor : IDisposable
 
             _noiseSuppressor = suppressor;
             SetNoiseSuppressionState("ready", "none", suppressor);
+#else
+            // No native noise suppressor on non-Windows builds (DeepFilterNet ships win-x64 only).
+            SetNoiseSuppressionState("unavailable", "no-native-noise-suppressor", null);
+            TrackNoiseSuppressionFrame(false, 0, true, count, inputPeak, inputSquareSum, inputPeak, inputSquareSum, 0f);
+            return false;
+#endif
         }
 
         var activeSuppressor = _noiseSuppressor;
