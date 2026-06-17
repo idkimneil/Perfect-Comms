@@ -46,10 +46,10 @@
 		<PackageReference Include="BepInEx.AutoPlugin" Version="1.1.0" PrivateAssets="all" />
 		<PackageReference Include="BepInEx.IL2CPP.MSBuild" Version="2.1.0-rc.1" PrivateAssets="all" ExcludeAssets="runtime" />
 		<PackageReference Include="Concentus" Version="2.2.2" />
-		<PackageReference Include="SIPSorcery" Version="10.0.6" />
+		<PackageReference Include="SIPSorcery" Version="10.0.9" />
 		<PackageReference Include="SocketIOClient" Version="3.1.2" />
-		<PackageReference Include="NAudio.Core" Version="2.3.0" />
-		<PackageReference Include="NAudio.WinMM" Version="2.3.0" />
+		<PackageReference Include="ManagedBass" Version="4.0.2" />
+		<PackageReference Include="ManagedBass.Fx" Version="4.0.2" />
 	</ItemGroup>
 
 	<ItemGroup>
@@ -68,11 +68,11 @@
 	</ItemGroup>
 
 	<ItemGroup>
-		<EmbeddedResource Include="Libs\NAudio.Core.dll">
-			<LogicalName>Lib.NAudio.Core.dll</LogicalName>
+		<EmbeddedResource Include="$(NuGetPackageRoot)managedbass\4.0.2\lib\netstandard2.0\ManagedBass.dll">
+			<LogicalName>Lib.ManagedBass.dll</LogicalName>
 		</EmbeddedResource>
-		<EmbeddedResource Include="Libs\NAudio.WinMM.dll">
-			<LogicalName>Lib.NAudio.WinMM.dll</LogicalName>
+		<EmbeddedResource Include="$(NuGetPackageRoot)managedbass.fx\4.0.2\lib\netstandard2.0\ManagedBass.Fx.dll">
+			<LogicalName>Lib.ManagedBass.Fx.dll</LogicalName>
 		</EmbeddedResource>
 		<EmbeddedResource Include="Libs\Concentus.dll">
 			<LogicalName>Lib.Concentus.dll</LogicalName>
@@ -89,16 +89,28 @@
 		<EmbeddedResource Include="Libs\rnnoise.x86.dll">
 			<LogicalName>Lib.rnnoise.x86.dll</LogicalName>
 		</EmbeddedResource>
+		<EmbeddedResource Include="Libs\bass.x64.dll">
+			<LogicalName>Lib.bass.x64.dll</LogicalName>
+		</EmbeddedResource>
+		<EmbeddedResource Include="Libs\bass.x86.dll">
+			<LogicalName>Lib.bass.x86.dll</LogicalName>
+		</EmbeddedResource>
+		<EmbeddedResource Include="Libs\bass_fx.x64.dll">
+			<LogicalName>Lib.bass_fx.x64.dll</LogicalName>
+		</EmbeddedResource>
+		<EmbeddedResource Include="Libs\bass_fx.x86.dll">
+			<LogicalName>Lib.bass_fx.x86.dll</LogicalName>
+		</EmbeddedResource>
 		<EmbeddedResource Include="Libs\speexdsp.x64.dll">
 			<LogicalName>Lib.speexdsp.x64.dll</LogicalName>
 		</EmbeddedResource>
 		<EmbeddedResource Include="Libs\speexdsp.x86.dll">
 			<LogicalName>Lib.speexdsp.x86.dll</LogicalName>
 		</EmbeddedResource>
-		<EmbeddedResource Include="$(NuGetPackageRoot)sipsorcery\10.0.6\lib\net6.0\SIPSorcery.dll">
+		<EmbeddedResource Include="$(NuGetPackageRoot)sipsorcery\10.0.9\lib\net6.0\SIPSorcery.dll">
 			<LogicalName>Lib.SIPSorcery.dll</LogicalName>
 		</EmbeddedResource>
-		<EmbeddedResource Include="$(NuGetPackageRoot)sipsorcerymedia.abstractions\10.0.6\lib\netstandard2.0\SIPSorceryMedia.Abstractions.dll">
+		<EmbeddedResource Include="$(NuGetPackageRoot)sipsorcerymedia.abstractions\10.0.9\lib\netstandard2.0\SIPSorceryMedia.Abstractions.dll">
 			<LogicalName>Lib.SIPSorceryMedia.Abstractions.dll</LogicalName>
 		</EmbeddedResource>
 		<EmbeddedResource Include="$(NuGetPackageRoot)sipsorcery.websocketsharp\0.0.1\lib\netstandard2.0\websocket-sharp.dll">
@@ -110,13 +122,13 @@
 		<EmbeddedResource Include="$(NuGetPackageRoot)dnsclient\1.8.0\lib\net6.0\DnsClient.dll">
 			<LogicalName>Lib.DnsClient.dll</LogicalName>
 		</EmbeddedResource>
-		<EmbeddedResource Include="$(NuGetPackageRoot)microsoft.extensions.dependencyinjection.abstractions\9.0.0\lib\netstandard2.0\Microsoft.Extensions.DependencyInjection.Abstractions.dll">
+		<EmbeddedResource Include="$(NuGetPackageRoot)microsoft.extensions.dependencyinjection.abstractions\10.0.7\lib\netstandard2.0\Microsoft.Extensions.DependencyInjection.Abstractions.dll">
 			<LogicalName>Lib.Microsoft.Extensions.DependencyInjection.Abstractions.dll</LogicalName>
 		</EmbeddedResource>
-		<EmbeddedResource Include="$(NuGetPackageRoot)microsoft.extensions.logging.abstractions\9.0.0\lib\netstandard2.0\Microsoft.Extensions.Logging.Abstractions.dll">
+		<EmbeddedResource Include="$(NuGetPackageRoot)microsoft.extensions.logging.abstractions\10.0.7\lib\netstandard2.0\Microsoft.Extensions.Logging.Abstractions.dll">
 			<LogicalName>Lib.Microsoft.Extensions.Logging.Abstractions.dll</LogicalName>
 		</EmbeddedResource>
-		<EmbeddedResource Include="$(NuGetPackageRoot)system.diagnostics.diagnosticsource\9.0.0\lib\netstandard2.0\System.Diagnostics.DiagnosticSource.dll">
+		<EmbeddedResource Include="$(NuGetPackageRoot)system.diagnostics.diagnosticsource\10.0.7\lib\netstandard2.0\System.Diagnostics.DiagnosticSource.dll">
 			<LogicalName>Lib.System.Diagnostics.DiagnosticSource.dll</LogicalName>
 		</EmbeddedResource>
 		<EmbeddedResource Include="$(NuGetPackageRoot)system.text.encodings.web\8.0.0\lib\net6.0\System.Text.Encodings.Web.dll">

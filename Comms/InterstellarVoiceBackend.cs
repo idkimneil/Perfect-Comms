@@ -4,7 +4,6 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
 #if WINDOWS
-using NAudio.Wave;
 #endif
 using Interstellar.Routing;
 using Interstellar.Routing.Router;
@@ -74,11 +73,10 @@ internal sealed class InterstellarVoiceBackend : IVoiceBackend
     private int _latchedMicChannel;
     private int _micChannelSwitchStreak;
     private double[] _micChannelEnergyScratch = Array.Empty<double>();
-    private IWaveIn? _windowsMicrophoneCapture;
+    private BassRecorder? _windowsMicRecorder;
     private ManualMicrophone? _windowsMicrophone;
-    private IWavePlayer? _windowsSpeakerOutput;
+    private BassStereoOutput? _windowsBassOutput;
     private ManualSpeaker? _windowsSpeaker;
-    private WindowsManualSpeakerSampleProvider? _windowsSpeakerProvider;
     private long _windowsMicCallbacks;
     private long _windowsMicBytes;
     private long _windowsMicSamples;
@@ -437,15 +435,6 @@ internal sealed class InterstellarVoiceBackend : IVoiceBackend
     }
 
 #if WINDOWS
-    private void OnWindowsPlaybackStopped(object? sender, NAudio.Wave.StoppedEventArgs e)
-    {
-        if (!ReferenceEquals(sender, _windowsSpeakerOutput)) return;
-        _speakerReady = false;
-        if (e.Exception == null) return;
-        VoiceDiagnostics.Log("interstellar.speaker", $"ready=false reason=playback-stopped error=\"{e.Exception.Message}\"");
-        Interlocked.Exchange(ref _speakerReopenRequestedFlag, 1);
-    }
-
     private void MaybeFollowSpeakerTopology()
     {
         if (!_speakerRequested) return;
@@ -469,7 +458,7 @@ internal sealed class InterstellarVoiceBackend : IVoiceBackend
         _speakerTopologyLastPollUtc = now;
 
         string signature;
-        try { signature = DescribeWindowsWaveOutDevices(); }
+        try { signature = BassRuntime.DescribeOutputDevices(); }
         catch { return; }
 
         if (signature == _speakerTopologySignature)
@@ -483,19 +472,9 @@ internal sealed class InterstellarVoiceBackend : IVoiceBackend
         }
 
         bool pinned = !string.IsNullOrWhiteSpace(_lastSpeakerDeviceName);
-        if (pinned && _speakerReady)
-        {
-            var resolved = ResolveWindowsWaveOutDevice(_lastSpeakerDeviceName);
-            if (resolved == _openedSpeakerDeviceNumber
-                && string.Equals(DescribeWindowsWaveOutDevice(resolved), _openedSpeakerProductName, StringComparison.Ordinal))
-            {
-                _speakerTopologySignature = signature;
-                return;
-            }
-        }
-
         VoiceDiagnostics.Log("interstellar.speaker", $"ready={_speakerReady} reason={(pinned ? "pinned-follow" : "default-follow")} oldDevices=\"{_speakerTopologySignature}\" newDevices=\"{signature}\"");
         SetSpeaker(_lastSpeakerDeviceName);
+        _speakerTopologySignature = signature;
     }
 
     private void StartWindowsMicrophone(string deviceName)
@@ -505,36 +484,31 @@ internal sealed class InterstellarVoiceBackend : IVoiceBackend
         _windowsMicrophone = manualMicrophone;
         _room.Microphone = manualMicrophone;
 
-        var waveInDevice = ResolveWindowsWaveInDevice(deviceName);
-        var capture = new WaveInEvent
+        var waveInDevice = BassRuntime.ResolveRecordDevice(deviceName);
+        var recorder = new BassRecorder(OnInterstellarMicFrame);
+        _windowsMicRecorder = recorder;
+        var captureDevice = ManagedBass.Bass.RecordGetDeviceInfo(waveInDevice, out var rdi) ? rdi.Name : "default";
+        if (!recorder.Start(waveInDevice))
         {
-            BufferMilliseconds = 20,
-            NumberOfBuffers = 4,
-            WaveFormat = new WaveFormat(Audio.AudioHelpers.ClockRate, 16, 1),
-            DeviceNumber = waveInDevice,
-        };
-        var captureDevice = DescribeWindowsWaveInDevice(waveInDevice);
-
-        _windowsMicrophoneCapture = capture;
-        capture.DataAvailable += OnWindowsMicrophoneData;
-        capture.StartRecording();
+            _windowsMicRecorder = null;
+            VoiceDiagnostics.Log("interstellar.mic", $"capture=bass-failed error=\"{ManagedBass.Bass.LastError}\"");
+            return;
+        }
         Interlocked.Exchange(ref _speakerTopologyFastUntilTicks, (DateTime.UtcNow + SpeakerTopologyFastWindow).Ticks);
-        VoiceDiagnostics.Log("interstellar.mic", $"capture=wavein-only captureDevice=\"{captureDevice}\" captureFormat=\"{DescribeWaveFormat(capture.WaveFormat)}\" waveInDevice={waveInDevice} defaultWaveIn=\"{DescribeDefaultWindowsWaveInDevice()}\"");
+        VoiceDiagnostics.Log("interstellar.mic", $"capture=bass captureDevice=\"{captureDevice}\" waveInDevice={waveInDevice}");
     }
 
     private void StopWindowsMicrophoneCapture()
     {
-        var capture = _windowsMicrophoneCapture;
-        _windowsMicrophoneCapture = null;
+        var recorder = _windowsMicRecorder;
+        _windowsMicRecorder = null;
         _windowsMicrophone = null;
-        if (capture == null) return;
-        try { capture.DataAvailable -= OnWindowsMicrophoneData; } catch { }
-        try { capture.StopRecording(); } catch { }
-        try { capture.Dispose(); } catch { }
+        if (recorder == null) return;
+        try { recorder.Dispose(); } catch { }
         Interlocked.Exchange(ref _speakerTopologyFastUntilTicks, (DateTime.UtcNow + SpeakerTopologyFastWindow).Ticks);
     }
 
-    private void OnWindowsMicrophoneData(object? sender, WaveInEventArgs e)
+    private void OnInterstellarMicFrame(float[] floatPcm, int samples)
     {
         Interlocked.Increment(ref _windowsMicCallbacks);
         var microphone = _windowsMicrophone;
@@ -543,71 +517,38 @@ internal sealed class InterstellarVoiceBackend : IVoiceBackend
             Interlocked.Increment(ref _windowsMicNoMicrophone);
             return;
         }
-        if (e.Buffer == null)
-        {
-            Interlocked.Increment(ref _windowsMicNoBuffer);
+        Interlocked.Add(ref _windowsMicBytes, samples * 4);
+        Volatile.Write(ref _windowsMicLastBytes, samples * 4);
+        if (samples <= 0)
             return;
-        }
-        var recordedBytes = Math.Min(e.BytesRecorded, e.Buffer.Length);
-        Interlocked.Add(ref _windowsMicBytes, recordedBytes);
-        Volatile.Write(ref _windowsMicLastBytes, recordedBytes);
-        if (recordedBytes <= 1)
+        Interlocked.Add(ref _windowsMicSamples, samples);
+        Volatile.Write(ref _windowsMicLastSamples, samples);
+        try
         {
-            Interlocked.Increment(ref _windowsMicTinyCallbacks);
-            return;
-        }
-        var format = (sender as IWaveIn)?.WaveFormat ?? _windowsMicrophoneCapture?.WaveFormat;
-        if (format == null)
-        {
-            Interlocked.Increment(ref _windowsMicNoFormat);
-            return;
-        }
-        var samples = ConvertWindowsCaptureToMonoFloat(e.Buffer, recordedBytes, format, out var floatPcm);
-        if (samples > 0)
-        {
-            Interlocked.Add(ref _windowsMicSamples, samples);
-            Volatile.Write(ref _windowsMicLastSamples, samples);
-            try
+            lock (_micProcessSync)
             {
-                lock (_micProcessSync)
-                {
-                    _micPreprocessor.ApplyHighPass(floatPcm, samples);
-                    _micPreprocessor.ApplyAutoGain(floatPcm, samples, _autoMicGain, out _);
-                    if (_captureOptions.NoiseSuppressionEnabled)
-                        _micPreprocessor.TryApplyNoiseSuppression(floatPcm, samples);
-                }
+                _micPreprocessor.ApplyHighPass(floatPcm, samples);
+                _micPreprocessor.ApplyAutoGain(floatPcm, samples, _autoMicGain, out _);
+                if (_captureOptions.NoiseSuppressionEnabled)
+                    _micPreprocessor.TryApplyNoiseSuppression(floatPcm, samples);
             }
-            catch (Exception ex)
-            {
-                VoiceDiagnostics.Log("interstellar.mic.capture_error", $"stage=preprocess error=\"{ex.Message}\"");
-            }
-            var peak = Audio.AudioHelpers.MeasurePeak(floatPcm, samples);
-            if (peak <= 0.001f)
-                Interlocked.Increment(ref _windowsMicSilentCallbacks);
-            var peakMilli = ToMilli(peak);
-            Volatile.Write(ref _windowsMicLastPeakMilli, peakMilli);
-            UpdateMax(ref _windowsMicPeakMilli, peakMilli);
-            var transmitGain = Audio.AudioHelpers.GetSmoothedTransmitLimiterGain(_transmitLimiterGain, peak);
-            _transmitLimiterGain = transmitGain;
-            Volatile.Write(ref _windowsMicLastGainMilli, ToMilli(transmitGain));
-            Audio.AudioHelpers.ApplyGain(floatPcm, samples, transmitGain);
-            Interlocked.Increment(ref _windowsMicPushedFrames);
-            microphone.PushAudioData(floatPcm);
         }
-    }
-
-    private int ConvertWindowsCaptureToMonoFloat(byte[] buffer, int recordedBytes, WaveFormat format, out float[] floatPcm)
-    {
-        var channels = Math.Max(1, format.Channels);
-        if (format.Encoding == WaveFormatEncoding.IeeeFloat && format.BitsPerSample == 32)
-            return ConvertWindowsFloat32ToMono(buffer, recordedBytes, channels, out floatPcm);
-        if (format.Encoding == WaveFormatEncoding.Pcm && format.BitsPerSample == 16)
-            return ConvertWindowsPcm16ToMono(buffer, recordedBytes, channels, out floatPcm);
-
-        floatPcm = Array.Empty<float>();
-        Interlocked.Increment(ref _windowsMicUnsupportedFormats);
-        VoiceDiagnostics.Log("interstellar.mic.capture_error", $"format=\"{DescribeWaveFormat(format)}\" bytes={recordedBytes} error=\"unsupported-capture-format\"");
-        return 0;
+        catch (Exception ex)
+        {
+            VoiceDiagnostics.Log("interstellar.mic.capture_error", $"stage=preprocess error=\"{ex.Message}\"");
+        }
+        var peak = Audio.AudioHelpers.MeasurePeak(floatPcm, samples);
+        if (peak <= 0.001f)
+            Interlocked.Increment(ref _windowsMicSilentCallbacks);
+        var peakMilli = ToMilli(peak);
+        Volatile.Write(ref _windowsMicLastPeakMilli, peakMilli);
+        UpdateMax(ref _windowsMicPeakMilli, peakMilli);
+        var transmitGain = Audio.AudioHelpers.GetSmoothedTransmitLimiterGain(_transmitLimiterGain, peak);
+        _transmitLimiterGain = transmitGain;
+        Volatile.Write(ref _windowsMicLastGainMilli, ToMilli(transmitGain));
+        Audio.AudioHelpers.ApplyGain(floatPcm, samples, transmitGain);
+        Interlocked.Increment(ref _windowsMicPushedFrames);
+        microphone.PushAudioData(floatPcm);
     }
 
     private string DescribeWindowsMicCaptureDiagnostics()
@@ -752,74 +693,6 @@ internal sealed class InterstellarVoiceBackend : IVoiceBackend
         return Math.Clamp(sample, -1f, 1f);
     }
 
-    private static int ResolveWindowsWaveInDevice(string deviceName)
-    {
-        var requested = NormalizeAudioDeviceName(deviceName);
-        if (!string.IsNullOrWhiteSpace(requested))
-            return ResolveWindowsWaveInDeviceByName(requested);
-        return -1;
-    }
-
-    private static int ResolveWindowsWaveInDeviceByName(string requested)
-    {
-        for (var i = 0; i < WaveInEvent.DeviceCount; i++)
-        {
-            var productName = NormalizeAudioDeviceName(WaveInEvent.GetCapabilities(i).ProductName);
-            if (DeviceNamesMatch(requested, productName))
-                return i;
-        }
-        return -1;
-    }
-
-    private static string DescribeWindowsWaveInDevice(int deviceNumber)
-    {
-        if (deviceNumber < 0) return "mapper";
-        try { return WaveInEvent.GetCapabilities(deviceNumber).ProductName ?? "unknown"; }
-        catch { return "unknown"; }
-    }
-
-    private static string DescribeDefaultWindowsWaveInDevice()
-        => "mapper";
-
-    private static int ResolveWindowsWaveOutDevice(string? deviceName)
-    {
-        var requested = NormalizeAudioDeviceName(deviceName);
-        if (!string.IsNullOrWhiteSpace(requested))
-        {
-            for (var i = 0; i < Audio.WinMmOutputDevices.DeviceCount; i++)
-            {
-                var productName = NormalizeAudioDeviceName(Audio.WinMmOutputDevices.GetProductName(i));
-                if (DeviceNamesMatch(requested, productName))
-                    return i;
-            }
-        }
-
-        return -1;
-    }
-
-    private static string DescribeWindowsWaveOutDevice(int deviceNumber)
-        => deviceNumber < 0 ? "mapper" : Audio.WinMmOutputDevices.GetProductName(deviceNumber);
-
-    private static string DescribeWindowsWaveOutDevices()
-    {
-        try
-        {
-            var names = new List<string>();
-            for (var i = 0; i < Audio.WinMmOutputDevices.DeviceCount; i++)
-                names.Add($"{i}:{Audio.WinMmOutputDevices.GetProductName(i)}");
-            return names.Count == 0 ? "none" : string.Join("|", names);
-        }
-        catch (Exception ex)
-        {
-            return $"error:{ex.Message}";
-        }
-    }
-
-    private static string DescribeWaveFormat(WaveFormat? format)
-    {
-        if (format == null) return "none";
-        return $"{format.Encoding}/{format.SampleRate}Hz/{format.BitsPerSample}bit/{format.Channels}ch";
-    }
 
     private static string NormalizeAudioDeviceName(string? deviceName)
         => string.Join(" ", (deviceName ?? string.Empty)
@@ -884,27 +757,18 @@ internal sealed class InterstellarVoiceBackend : IVoiceBackend
             StopWindowsSpeaker();
             _lastSpeakerDeviceName = deviceName ?? string.Empty;
             _speakerRequested = true;
-            _speakerTopologySignature = DescribeWindowsWaveOutDevices();
+            BassRuntime.EnsureConfigured();
             var manualSpeaker = new ManualSpeaker(StopWindowsSpeaker);
             _room.Speaker = manualSpeaker;
             _windowsSpeaker = manualSpeaker;
-            var provider = new WindowsManualSpeakerSampleProvider(manualSpeaker);
-            _windowsSpeakerProvider = provider;
 
-            var outputDevice = ResolveWindowsWaveOutDevice(deviceName);
-            _windowsSpeakerOutput = new WaveOutEvent
-            {
-                DeviceNumber = outputDevice,
-                DesiredLatency = 60,
-                NumberOfBuffers = 3,
-            };
-            _windowsSpeakerOutput.PlaybackStopped += OnWindowsPlaybackStopped;
-            _windowsSpeakerOutput.Init(provider.ToWaveProvider());
-            _windowsSpeakerOutput.Play();
-            _speakerReady = _windowsSpeakerOutput.PlaybackState == PlaybackState.Playing;
+            var outputDevice = BassRuntime.ResolveOutputDevice(deviceName);
+            var output = new BassStereoOutput(manualSpeaker.Read);
+            _windowsBassOutput = output;
+            _speakerReady = output.Start(outputDevice) && output.IsPlaying;
             _openedSpeakerDeviceNumber = outputDevice;
-            _openedSpeakerProductName = DescribeWindowsWaveOutDevice(outputDevice);
-            VoiceDiagnostics.Log("interstellar.speaker", $"ready={_speakerReady} device=\"{deviceName}\" outputDevice=\"{DescribeWindowsWaveOutDevice(outputDevice)}\" outputDeviceNumber={outputDevice} sourceFormat=\"{provider.WaveFormat}\" graphFormat=\"{provider.WaveFormat}\" outputDevices=\"{DescribeWindowsWaveOutDevices()}\" latencyMs=60 manualSpeaker=true");
+            _openedSpeakerProductName = ManagedBass.Bass.GetDeviceInfo(outputDevice, out var sdi) ? sdi.Name : "default";
+            VoiceDiagnostics.Log("interstellar.speaker", $"ready={_speakerReady} device=\"{deviceName}\" bassDevice={outputDevice} backend=bass");
 #else
             try { _room.Speaker = null; } catch { }
             _speakerReady = false;
@@ -1124,76 +988,14 @@ internal sealed class InterstellarVoiceBackend : IVoiceBackend
 #if WINDOWS
     private void StopWindowsSpeaker()
     {
-        var speaker = _windowsSpeakerOutput;
-        _windowsSpeakerOutput = null;
+        var output = _windowsBassOutput;
+        _windowsBassOutput = null;
         _windowsSpeaker = null;
-        _windowsSpeakerProvider = null;
         _speakerReady = false;
-        if (speaker == null) return;
-        try { speaker.PlaybackStopped -= OnWindowsPlaybackStopped; } catch { }
-        try { speaker.Stop(); } catch { }
-        try { speaker.Dispose(); } catch { }
+        if (output == null) return;
+        try { output.Dispose(); } catch { }
     }
 
-    private sealed class WindowsManualSpeakerSampleProvider : ISampleProvider
-    {
-        private const int Channels = 2;
-        private readonly ManualSpeaker _speaker;
-        private float[] _scratch = Array.Empty<float>();
-        private int _readCallbacks;
-        private int _readFailures;
-        private long _readSamples;
-        private long _silentReads;
-        private int _lastReadCount;
-        private int _lastPeakMilli;
-        private int _maxPeakMilli;
-
-        public WindowsManualSpeakerSampleProvider(ManualSpeaker speaker)
-        {
-            _speaker = speaker;
-        }
-
-        public WaveFormat WaveFormat { get; } = WaveFormat.CreateIeeeFloatWaveFormat(Audio.AudioHelpers.ClockRate, Channels);
-        public int ReadCallbacks => Volatile.Read(ref _readCallbacks);
-        public int ReadFailures => Volatile.Read(ref _readFailures);
-        public string Diagnostics => $"reads={Volatile.Read(ref _readCallbacks)} failures={Volatile.Read(ref _readFailures)} samples={Interlocked.Read(ref _readSamples)} silentReads={Interlocked.Read(ref _silentReads)} lastCount={Volatile.Read(ref _lastReadCount)} lastPeak={FromMilli(Volatile.Read(ref _lastPeakMilli)):0.000} peak={FromMilli(Volatile.Read(ref _maxPeakMilli)):0.000}";
-
-        public int Read(float[] buffer, int offset, int count)
-        {
-            if (count <= 0) return 0;
-            Interlocked.Increment(ref _readCallbacks);
-
-            try
-            {
-                if (_scratch.Length != count)
-                    _scratch = new float[count];
-                _speaker.Read(_scratch);
-                Interlocked.Add(ref _readSamples, count);
-                Volatile.Write(ref _lastReadCount, count);
-                var peak = 0f;
-                for (var i = 0; i < count; i++)
-                {
-                    var abs = Math.Abs(_scratch[i]);
-                    if (abs > peak) peak = abs;
-                }
-                if (peak <= 0.001f)
-                    Interlocked.Increment(ref _silentReads);
-                var peakMilli = ToMilli(peak);
-                Volatile.Write(ref _lastPeakMilli, peakMilli);
-                UpdateMax(ref _maxPeakMilli, peakMilli);
-                for (var i = 0; i < count; i++)
-                    buffer[offset + i] = _scratch[i];
-                return count;
-            }
-            catch (Exception ex)
-            {
-                Array.Clear(buffer, offset, count);
-                if (Interlocked.Increment(ref _readFailures) == 1)
-                    VoiceDiagnostics.Log("interstellar.speaker.read_error", $"error=\"{ex.Message}\"");
-            }
-            return count;
-        }
-    }
 #endif
 
     private void HandleCustomMessage(byte[] payload)
@@ -1257,8 +1059,8 @@ internal sealed class InterstellarVoiceBackend : IVoiceBackend
             $"micReady={_microphoneReady} speakerReady={_speakerReady} androidSpeakerPlaying={_androidSpeaker?.IsPlaying == true} " +
             $"androidSpeakerReads={_androidSpeaker?.ReadCallbacks ?? 0} localMeterReady={_localMicMeter != null}");
 #elif WINDOWS
-            $"micReady={_microphoneReady} speakerReady={_speakerReady} windowsSpeakerReads={_windowsSpeakerProvider?.ReadCallbacks ?? 0} windowsSpeakerReadFailures={_windowsSpeakerProvider?.ReadFailures ?? 0} " +
-            $"micCapture=({DescribeWindowsMicCaptureDiagnostics()}) speakerPull=({_windowsSpeakerProvider?.Diagnostics ?? "none"}) " +
+            $"micReady={_microphoneReady} speakerReady={_speakerReady} " +
+            $"micCapture=({DescribeWindowsMicCaptureDiagnostics()}) speakerPull=(bass) " +
             $"localMeterReady={_localMicMeter != null} syntheticTone={_captureOptions.SyntheticMicToneEnabled} syntheticFrames={Volatile.Read(ref _syntheticFrames)}");
 #else
             $"micReady={_microphoneReady} speakerReady={_speakerReady} localMeterReady={_localMicMeter != null} syntheticTone={_captureOptions.SyntheticMicToneEnabled} syntheticFrames={Volatile.Read(ref _syntheticFrames)}");

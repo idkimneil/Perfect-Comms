@@ -1164,17 +1164,29 @@ public static class PingTrackerPatch
         else
         {
             float slotPitch = SlotWidth;
+            int count = 0;
             foreach (var id in _slotOrder)
                 if (_slots.TryGetValue(id, out var s))
+                {
                     slotPitch = Mathf.Max(slotPitch, RequiredSlotPitch(s));
-            float iconY = _layoutAnchoredBottom ? BottomNameLift : 0f;
-            float labelY = _layoutAnchoredBottom ? BottomNameLift - LabelOffset : -LabelOffset;
+                    count++;
+                }
+            int perRow = MaxSlotsPerRow(slotPitch, count);
+            float rowPitch = _namePosition == SpeakingBarNamePosition.Top
+                ? SlotHeight + TopNameExtraPitch : SlotHeight;
+            float baseY = _layoutAnchoredBottom ? BottomNameLift : 0f;
             float cMinX = 0f, cMaxX = 0f, cMinY = 0f, cMaxY = 0f;
             int i = 0;
             foreach (var id in _slotOrder)
             {
                 if (!_slots.TryGetValue(id, out var slot)) continue;
-                float x = i * slotPitch;
+                int row = i / perRow;
+                int col = i % perRow;
+                int rowCount = Mathf.Min(perRow, count - row * perRow);
+                float rowOffset = (rowCount - 1) * slotPitch * 0.5f;
+                float x = col * slotPitch - rowOffset;
+                float iconY = baseY + (_layoutAnchoredBottom ? row * rowPitch : -row * rowPitch);
+                float labelY = iconY - LabelOffset;
                 if (slot.IconGO   != null)
                     slot.IconGO.transform.localPosition  = new Vector3(x, iconY, -100f);
                 if (slot.RingGO   != null)
@@ -1195,14 +1207,24 @@ public static class PingTrackerPatch
             {
                 if (_namePosition is SpeakingBarNamePosition.Top or SpeakingBarNamePosition.Bottom)
                 {
-                    float centre = (i - 1) * slotPitch * 0.5f;
-                    float half = Mathf.Max(centre - cMinX, cMaxX - centre);
-                    cMinX = centre - half;
-                    cMaxX = centre + half;
+                    float half = Mathf.Max(-cMinX, cMaxX);
+                    cMinX = -half;
+                    cMaxX = half;
                 }
                 UpdateBackdrop(cMinX, cMaxX, cMinY, cMaxY);
             }
         }
+    }
+
+    private static int MaxSlotsPerRow(float slotPitch, int count)
+    {
+        if (count <= 1) return 1;
+        var cam = Camera.main;
+        if (cam == null || !cam.orthographic || slotPitch <= 0.0001f) return count;
+        float worldWidth = 2f * cam.orthographicSize * cam.aspect * (1f - 2f * ManualViewportPadding);
+        float localWidth = worldWidth / Mathf.Max(_barScale, 0.0001f);
+        int fit = Mathf.FloorToInt(localWidth / slotPitch);
+        return Mathf.Clamp(fit, 1, count);
     }
 
     private static float RequiredSlotPitch(SpeakerSlot slot)

@@ -8,7 +8,9 @@ internal readonly record struct VoiceProximityResult(
     VoiceAudioFilterMode FilterMode,
     bool Audible,
     VoiceProximityReason Reason,
-    float WallCoefficient)
+    float WallCoefficient,
+    UnityEngine.Vector2 SourcePosition = default,
+    float OcclusionFactor = 1f)
 {
     public static VoiceProximityResult Muted(VoiceProximityReason reason, float wallCoefficient = 1f)
         => new(0f, 0f, 0f, 0f, VoiceAudioFilterMode.None, false, reason, wallCoefficient);

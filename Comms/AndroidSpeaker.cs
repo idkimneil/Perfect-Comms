@@ -2,7 +2,6 @@
 using System;
 using System.Threading;
 using Interstellar.VoiceChat;
-using NAudio.Wave;
 using UnityEngine;
 
 namespace VoiceChatPlugin.VoiceChat;
@@ -108,25 +107,24 @@ internal sealed class AndroidSpeaker : IDisposable
 
 internal sealed class AndroidSampleProviderSpeaker : IDisposable
 {
+    private const int SampleRate = 48000;
+    private const int Channels = 2;
     private readonly AudioSource _source;
     private readonly AudioClip _clip;
-    private readonly ISampleProvider _provider;
+    private readonly AndroidVoiceMixer _mixer;
     private int _readCallbacks;
 
     public bool IsPlaying => _source != null && _source.isPlaying;
     public int ReadCallbacks => Volatile.Read(ref _readCallbacks);
 
-    public AndroidSampleProviderSpeaker(ISampleProvider provider)
+    public AndroidSampleProviderSpeaker(AndroidVoiceMixer mixer)
     {
-        _provider = provider ?? throw new ArgumentNullException(nameof(provider));
+        _mixer = mixer ?? throw new ArgumentNullException(nameof(mixer));
 
         var host = VoiceChatPluginMain.ResidentObject
             ?? throw new InvalidOperationException("[VC] ResidentObject is null");
 
-        var format = _provider.WaveFormat;
-        int channels = Math.Max(1, format.Channels);
-        int sampleRate = format.SampleRate > 0 ? format.SampleRate : 48000;
-        int clipSamples = Math.Max(sampleRate / 2, 1);
+        int clipSamples = SampleRate / 2;
 
         _source = host.AddComponent<AudioSource>();
         _source.hideFlags |= HideFlags.DontUnloadUnusedAsset | HideFlags.HideAndDontSave;
@@ -136,8 +134,8 @@ internal sealed class AndroidSampleProviderSpeaker : IDisposable
         _clip = AudioClip.Create(
             "VCBclAudio",
             clipSamples,
-            channels,
-            sampleRate,
+            Channels,
+            SampleRate,
             true,
             (AudioClip.PCMReaderCallback)(ary => Read(ary)));
 
@@ -145,15 +143,13 @@ internal sealed class AndroidSampleProviderSpeaker : IDisposable
         _source.loop = true;
         _source.Play();
 
-        VoiceDiagnostics.DebugInfo($"[VC] Android BCL speaker initialised ({sampleRate} Hz, {channels} ch).");
+        VoiceDiagnostics.DebugInfo($"[VC] Android BCL speaker initialised ({SampleRate} Hz, {Channels} ch, managed mixer).");
     }
 
     private void Read(float[] data)
     {
         Interlocked.Increment(ref _readCallbacks);
-        int read = _provider.Read(data, 0, data.Length);
-        if (read < data.Length)
-            Array.Clear(data, Math.Max(read, 0), data.Length - Math.Max(read, 0));
+        _mixer.Read(data);
     }
 
     public void Dispose()

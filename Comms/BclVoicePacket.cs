@@ -430,7 +430,7 @@ internal sealed class BclVoiceJitterBuffer
             }
 
             var nextSequence = FindNextSequence();
-            if (nextSequence == null) return; // trailing stall -> ring layer bridges it (Fix 2b-3)
+            if (nextSequence == null) return; // trailing stall -> mixer prebuffer/reprime conceals it
 
             var next = _packets[nextSequence.Value];
             // Long real gap: snap forward instead of inventing > ~100 ms of fake audio (Fix 2b-2).
