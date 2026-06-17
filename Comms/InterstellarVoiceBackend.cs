@@ -484,18 +484,18 @@ internal sealed class InterstellarVoiceBackend : IVoiceBackend
         _windowsMicrophone = manualMicrophone;
         _room.Microphone = manualMicrophone;
 
-        var waveInDevice = BassRuntime.ResolveRecordDevice(deviceName);
+        var recordDevice = BassRuntime.ResolveRecordDevice(deviceName);
         var recorder = new BassRecorder(OnInterstellarMicFrame);
         _windowsMicRecorder = recorder;
-        var captureDevice = ManagedBass.Bass.RecordGetDeviceInfo(waveInDevice, out var rdi) ? rdi.Name : "default";
-        if (!recorder.Start(waveInDevice))
+        var captureDevice = ManagedBass.Bass.RecordGetDeviceInfo(recordDevice, out var rdi) ? rdi.Name : "default";
+        if (!recorder.Start(recordDevice))
         {
             _windowsMicRecorder = null;
             VoiceDiagnostics.Log("interstellar.mic", $"capture=bass-failed error=\"{ManagedBass.Bass.LastError}\"");
             return;
         }
         Interlocked.Exchange(ref _speakerTopologyFastUntilTicks, (DateTime.UtcNow + SpeakerTopologyFastWindow).Ticks);
-        VoiceDiagnostics.Log("interstellar.mic", $"capture=bass captureDevice=\"{captureDevice}\" waveInDevice={waveInDevice}");
+        VoiceDiagnostics.Log("interstellar.mic", $"capture=bass captureDevice=\"{captureDevice}\" recordDevice={recordDevice}");
     }
 
     private void StopWindowsMicrophoneCapture()

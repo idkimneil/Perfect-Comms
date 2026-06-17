@@ -147,7 +147,7 @@ internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
     // echo-canceller's reference delay can't drift unbounded relative to capture.
     private readonly FarEndReference _farEndReference = new(AudioHelpers.ClockRate / 2, AudioHelpers.ClockRate / 5);
     private int _captureFrameSamples;
-    // Bumped under _captureFrameSync on every capture stop/restart. A WaveInEvent callback that was already
+    // Bumped under _captureFrameSync on every capture stop/restart. A BassRecorder callback that was already
     // dispatched before teardown snapshots the epoch on entry and is dropped once it acquires the lock, so a
     // stale device's frame can never push samples into state the next device is about to reuse.
     private int _captureEpoch;
@@ -208,7 +208,7 @@ internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
     private bool _captureLiveSignalSeen;
     private int _deadInputFrames;
     private int _deadInputDetected;
-    private int _lastOpenedWaveInDevice = -1;
+    private int _lastOpenedRecordDevice = -1;
 
     // Never-live + 10s of pure quantization noise = dead feed; a device that produced speech once is trusted (quiet != dead).
     // Diagnostics only — device choice is always the user's; the app never switches capture devices on its own.
@@ -231,7 +231,7 @@ internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
         _deadInputFrames = 0;
         Interlocked.Exchange(ref _deadInputDetected, 1);
         VoiceDiagnostics.Log("bcl.mic.dead-input",
-            $"device=\"{_lastMicDeviceName}\" openedWaveInDevice={Volatile.Read(ref _lastOpenedWaveInDevice)} peak={peak:0.000000}");
+            $"device=\"{_lastMicDeviceName}\" recordDevice={Volatile.Read(ref _lastOpenedRecordDevice)} peak={peak:0.000000}");
     }
     private double _syntheticTonePhase;
     private int _syntheticFrames;
@@ -636,19 +636,19 @@ internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
             StopMicrophone($"restart:{reason}");
             _latchedMicChannel = 0;
             _micChannelSwitchStreak = 0;
-            var captureKind = "wavein";
-            var captureDevice = "mapper";
-            int waveInDevice = -1;
+            var captureKind = "bass";
+            var captureDevice = "default";
+            int recordDevice = -1;
             if (!_captureOptions.SyntheticMicToneEnabled)
             {
                 BassRuntime.EnsureConfigured();
-                waveInDevice = ResolveBassRecordDevice(_lastMicDeviceName);
-                Volatile.Write(ref _lastOpenedWaveInDevice, waveInDevice);
+                recordDevice = ResolveBassRecordDevice(_lastMicDeviceName);
+                Volatile.Write(ref _lastOpenedRecordDevice, recordDevice);
                 var recorder = new BassRecorder(ProcessBassMicFrame);
                 _bassRecorder = recorder;
                 captureKind = "bass";
-                captureDevice = ManagedBass.Bass.RecordGetDeviceInfo(waveInDevice, out var rdi) ? rdi.Name : "default";
-                if (!recorder.Start(waveInDevice))
+                captureDevice = ManagedBass.Bass.RecordGetDeviceInfo(recordDevice, out var rdi) ? rdi.Name : "default";
+                if (!recorder.Start(recordDevice))
                 {
                     _bassRecorder = null;
                     throw new InvalidOperationException($"bass record start failed: {ManagedBass.Bass.LastError}");
@@ -669,7 +669,7 @@ internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
             _farEndReference.Enabled = !_captureOptions.SyntheticMicToneEnabled;
             _micPreprocessor.ResetEchoCancellation();
             Interlocked.Exchange(ref _speakerTopologyFastUntilTicks, (DateTime.UtcNow + SpeakerTopologyFastWindow).Ticks);
-            VoiceDiagnostics.Log("bcl.mic", $"ready=true reason={reason} capture={captureKind} device=\"{_lastMicDeviceName}\" captureDevice=\"{captureDevice}\" captureFormat=\"48000Hz/float/mono\" waveInDevice={waveInDevice} recordDevices=\"{DescribeBassRecordDevices()}\" syntheticTone={_captureOptions.SyntheticMicToneEnabled} volume={_micVolume:0.00}");
+            VoiceDiagnostics.Log("bcl.mic", $"ready=true reason={reason} capture={captureKind} device=\"{_lastMicDeviceName}\" captureDevice=\"{captureDevice}\" captureFormat=\"48000Hz/float/mono\" recordDevice={recordDevice} recordDevices=\"{DescribeBassRecordDevices()}\" syntheticTone={_captureOptions.SyntheticMicToneEnabled} volume={_micVolume:0.00}");
         }
         catch (Exception ex)
         {
@@ -692,7 +692,7 @@ internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
         _microphoneReady = false;
         if (hadMic)
             Interlocked.Exchange(ref _speakerTopologyFastUntilTicks, (DateTime.UtcNow + SpeakerTopologyFastWindow).Ticks);
-        // Reset the native RNNoise preprocessor INSIDE the capture lock: a WaveInEvent callback can still be
+        // Reset the native RNNoise preprocessor INSIDE the capture lock: a BassRecorder callback can still be
         // mid-flight in ProcessMicrophoneFrameLocked -> TryApplyNoiseSuppression (native ProcessFrame on the
         // same state pointer Reset destroys). Holding _captureFrameSync makes the two mutually exclusive and
         // closes the use-after-free that crashed the game on fast device/mic switches.
@@ -3473,7 +3473,7 @@ internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
             $"micCallbacks={Volatile.Read(ref _micCallbacks)} micBytes={Volatile.Read(ref _micBytes)} micSamples={Volatile.Read(ref _micSamples)} micWindowSamples={micWindowSamples} micPeak={micPeak:0.000000} micRms={micRms:0.000000} micCrest={micCrest:0.00} micNonZeroSamples={micNonZeroSamples} micSilentCallbacks={micSilentCallbacks} micNearClipSamples={micNearClipSamples} micClipPct={micClipPct:0.000} micZeroCrossRate={micZeroCrossRate:0.0000} " +
             $"micMutedDrops={Volatile.Read(ref _micMutedDrops)} micEncodeFailures={Volatile.Read(ref _micEncodeFailures)} micEncodedFrames={Volatile.Read(ref _micEncodedFrames)} micNoOpenChannelDrops={Volatile.Read(ref _micNoOpenChannelDrops)} audioDecodeFailures={Volatile.Read(ref _audioDecodeFailures)} " +
             $"noiseGate={noiseGateThreshold:0.000000} vadThreshold={vadThreshold:0.000000} gateReason={_lastGateReason} gatePeak={_lastGatePeak:0.000000} gateRms={_lastGateRms:0.000000} gateThreshold={_lastGateThreshold:0.000000} txGain={_lastTransmitGain:0.000} txPeak={_lastTransmitPeak:0.000000} txPeakMax={txPeakMax:0.000000} txRms={txRms:0.000000} txSamples={txSamples} opusBytesAvg={opusAvgBytes:0.0} opusBytesMin={opusMinBytes} opusBytesMax={opusMaxBytes} " +
-            $"syntheticTone={_captureOptions.SyntheticMicToneEnabled} noiseSuppression={_captureOptions.NoiseSuppressionEnabled} {rnnoiseSummary} syntheticFrames={Volatile.Read(ref _syntheticFrames)} capture={DescribeCaptureMode()} calibration={_captureOptions.MicCalibrationDiagnostics} sensitivity={_captureOptions.MicSensitivity:0.00} micReady={_microphoneReady} speakerReady={_speakerReady} plp={_adaptedPacketLossPercent} bitrate={_adaptedBitrate} micOpened={Volatile.Read(ref _lastOpenedWaveInDevice)} micDeadInput={Volatile.Read(ref _deadInputDetected)}");
+            $"syntheticTone={_captureOptions.SyntheticMicToneEnabled} noiseSuppression={_captureOptions.NoiseSuppressionEnabled} {rnnoiseSummary} syntheticFrames={Volatile.Read(ref _syntheticFrames)} capture={DescribeCaptureMode()} calibration={_captureOptions.MicCalibrationDiagnostics} sensitivity={_captureOptions.MicSensitivity:0.00} micReady={_microphoneReady} speakerReady={_speakerReady} plp={_adaptedPacketLossPercent} bitrate={_adaptedBitrate} recordDevice={Volatile.Read(ref _lastOpenedRecordDevice)} micDeadInput={Volatile.Read(ref _deadInputDetected)}");
         if ((_captureOptions.NoiseSuppressionEnabled || rnnoise.Attempts > 0 || rnnoise.UnavailableFrames > 0)
             && now - _lastRnNoiseStatsLogUtc >= RnNoiseStatsLogInterval)
         {
@@ -3491,7 +3491,7 @@ internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
 #if ANDROID
         return "android-unity-microphone";
 #else
-        return "wavein-only";
+        return "bass";
 #endif
     }
 
