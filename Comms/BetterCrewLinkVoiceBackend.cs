@@ -22,10 +22,10 @@ internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
     private static readonly bool BclOpusUseInbandFec = true;   // arm LossResistant flag (sender) + the jitter-buffer Fec drain arm
     private static readonly int BclOpusPacketLossPercent = 15; // non-zero PLP so Opus embeds FEC redundancy in the wire frame
     private const int BclPlaybackLatencyMs = 60;
-    private const int BclJitterTargetDelayFrames = 4;
+    private const int BclJitterTargetDelayFrames = 2;
     private const int BclJitterMaxBufferedFrames = 16;
-    private const int BclJitterMinTargetFrames = 2;
-    private const int BclJitterMaxTargetFrames = 10;
+    private const int BclJitterMinTargetFrames = 1;
+    private const int BclJitterMaxTargetFrames = 3;
     private const int CodecAdaptIntervalFrames = 100;
     private const int PlpDeadbandPercent = 3;
     private const float RemoteSpeakingThreshold = 0.004f;
