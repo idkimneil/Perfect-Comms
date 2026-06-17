@@ -101,6 +101,12 @@
 		<EmbeddedResource Include="Libs\bass_fx.x86.dll">
 			<LogicalName>Lib.bass_fx.x86.dll</LogicalName>
 		</EmbeddedResource>
+		<EmbeddedResource Include="Libs\opus.x64.dll">
+			<LogicalName>Lib.opus.x64.dll</LogicalName>
+		</EmbeddedResource>
+		<EmbeddedResource Include="Libs\df.x64.dll">
+			<LogicalName>Lib.df.x64.dll</LogicalName>
+		</EmbeddedResource>
 		<EmbeddedResource Include="Libs\speexdsp.x64.dll">
 			<LogicalName>Lib.speexdsp.x64.dll</LogicalName>
 		</EmbeddedResource>

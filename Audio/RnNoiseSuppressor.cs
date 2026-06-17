@@ -7,7 +7,7 @@ using BepInEx;
 
 namespace VoiceChatPlugin.Audio;
 
-internal sealed unsafe class RnNoiseSuppressor : IDisposable
+internal sealed unsafe class RnNoiseSuppressor : INoiseSuppressor
 {
     private const string NativeFileName = "rnnoise.dll";
     private static string ResourceName => Environment.Is64BitProcess ? "Lib.rnnoise.x64.dll" : "Lib.rnnoise.x86.dll";

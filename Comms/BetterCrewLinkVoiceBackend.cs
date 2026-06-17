@@ -5,8 +5,6 @@ using System.Linq;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
-using Concentus.Enums;
-using Concentus.Structs;
 using SIPSorcery.Net;
 using SocketIOClient;
 using UnityEngine;
@@ -25,9 +23,9 @@ internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
     private static readonly int BclOpusPacketLossPercent = 15; // non-zero PLP so Opus embeds FEC redundancy in the wire frame
     private const int BclPlaybackLatencyMs = 60;
     private const int BclJitterTargetDelayFrames = 4;
-    private const int BclJitterMaxBufferedFrames = 8;
+    private const int BclJitterMaxBufferedFrames = 16;
     private const int BclJitterMinTargetFrames = 2;
-    private const int BclJitterMaxTargetFrames = 6;
+    private const int BclJitterMaxTargetFrames = 10;
     private const int CodecAdaptIntervalFrames = 100;
     private const int PlpDeadbandPercent = 3;
     private const float RemoteSpeakingThreshold = 0.004f;
@@ -189,7 +187,7 @@ internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
     private AndroidSampleProviderSpeaker? _androidSpeaker;
     private AndroidVoiceMixer? _androidMixer;
 #endif
-    private OpusEncoder _encoder = CreateEncoder();
+    private IVoiceEncoder _encoder = CreateEncoder();
     private Timer? _syntheticMicTimer;
     private string _lastMicDeviceName = string.Empty;
     private volatile float _micVolume = 1f;
@@ -281,9 +279,7 @@ internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
         {
             try
             {
-#pragma warning disable CS0618
-                _ = new OpusDecoder(AudioHelpers.ClockRate, AudioHelpers.Channels);
-#pragma warning restore CS0618
+                VoiceCodec.CreateDecoder().Dispose();
             }
             catch (Exception ex)
             {
@@ -3547,21 +3543,16 @@ internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
         VoiceDiagnostics.Log("bcl.codec.adapt", $"plp={targetPlp} bitrate={targetBitrate} maxLossPermille={maxLossPermille}");
     }
 
-    private static OpusEncoder CreateEncoder()
-    {
-#pragma warning disable CS0618
-        var encoder = new OpusEncoder(AudioHelpers.ClockRate, AudioHelpers.Channels, OpusApplication.OPUS_APPLICATION_VOIP);
-#pragma warning restore CS0618
-        encoder.Bitrate = BclOpusBitrate;
-        encoder.Complexity = AudioHelpers.OpusComplexity;
-        encoder.SignalType = OpusSignal.OPUS_SIGNAL_VOICE;
-        encoder.UseVBR = true;
-        encoder.UseConstrainedVBR = BclOpusUseConstrainedVbr;
-        encoder.UseDTX = true; // shrinks any quiet frames that pass the ShouldTransmit gate
-        encoder.UseInbandFEC = BclOpusUseInbandFec;
-        encoder.PacketLossPercent = BclOpusPacketLossPercent;
-        return encoder;
-    }
+    private static IVoiceEncoder CreateEncoder()
+        => VoiceCodec.CreateEncoder(
+            bitrate: BclOpusBitrate,
+            complexity: AudioHelpers.OpusComplexity,
+            voiceSignal: true,
+            vbr: true,
+            constrainedVbr: BclOpusUseConstrainedVbr,
+            dtx: true, // shrinks any quiet frames that pass the ShouldTransmit gate
+            fec: BclOpusUseInbandFec,
+            packetLossPercent: BclOpusPacketLossPercent);
 
     private static void ApplySavedVolume(PeerConnection peer)
     {
@@ -3752,7 +3743,7 @@ internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
         // Reset to MinValue the instant the channel is observed open. Touched only on the main-thread poll.
         public DateTime ChannelDeficitSinceUtc { get; set; } = DateTime.MinValue;
 #pragma warning disable CS0618
-        public OpusDecoder Decoder { get; } = new(AudioHelpers.ClockRate, AudioHelpers.Channels);
+        public IVoiceDecoder Decoder { get; } = VoiceCodec.CreateDecoder();
 #pragma warning restore CS0618
         public byte PlayerId { get; private set; } = byte.MaxValue;
         public string PlayerName { get; private set; } = "Unknown";

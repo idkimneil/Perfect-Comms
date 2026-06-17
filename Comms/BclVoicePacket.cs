@@ -262,6 +262,23 @@ internal sealed class BclVoiceJitterBuffer
         _packetsSinceGrow = 0;
     }
 
+    // Proactive, jitter-estimate-driven depth: instead of only reacting to discrete late/reordered frames,
+    // raise the playout target toward what the measured RFC3550 arrival jitter actually needs (one frame-step
+    // per cooldown, toward baseline + JitterGain*jitterStdev + 1 frame margin). A bursty link deepens its buffer
+    // BEFORE it underruns rather than after, which is the difference between a deeper cushion and an audible cut.
+    private void MaybeRaiseTargetForJitter(int frameSamples)
+    {
+        if (frameSamples <= 0 || _targetDelayFrames >= _maxTargetDelayFrames) return;
+        if (_packetsSinceGrow < GrowCooldownPackets) return;
+        double jitter = System.Threading.Volatile.Read(ref _jitterSamples);
+        int jitterFrames = (int)Math.Ceiling(AudioHelpers.JitterGain * jitter / frameSamples);
+        int desired = Math.Clamp(_minTargetDelayFrames + jitterFrames + 1, _minTargetDelayFrames, _maxTargetDelayFrames);
+        if (desired <= _targetDelayFrames) return;
+        _targetDelayFrames++;
+        _packetsSinceGrow = 0;
+        _windowDisturbed = true; // a clean-window shrink must not immediately undo a jitter-driven grow
+    }
+
     private void NoteAcceptedPacketForAdaptation()
     {
         if (_packetsSinceGrow < int.MaxValue) _packetsSinceGrow++;
@@ -347,6 +364,7 @@ internal sealed class BclVoiceJitterBuffer
         _lastArrivalTicks = nowTicks;
         _lastArrivalSeq = packet.Sequence;
         _haveArrival = true;
+        MaybeRaiseTargetForJitter(packet.Duration);
 
         // Manual scan instead of LINQ .Any(): avoids per-packet iterator + closure allocation.
         bool anyBufferedAfter = false;
