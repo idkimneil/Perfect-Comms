@@ -1,5 +1,41 @@
 # Changelog
 
+## Perfect Comms v3.0.1
+
+Perfect Comms v3.0.1 is a deep audio-quality release. The entire voice engine has been rebuilt around the BASS audio library, a native Opus 1.6.1 codec with neural packet-loss recovery, and DeepFilterNet 3 noise suppression, with a new adaptive playout buffer that makes voice noticeably smoother on any connection. It also updates the WebRTC transport for more reliable peer connections, restores the per-situation radio, wall-occlusion, and ghost voice filters with proper reverb, and centers the speaking bar with automatic row wrapping.
+
+### What's Changed
+
+- **Rebuilt audio engine.**
+  > <sub>Microphone capture and playback are now built on the BASS audio library instead of the old NAudio stack, with a single managed mixer driving every voice. This is the foundation for the quality and smoothness improvements below, and it is lower-latency and cleaner under the hood.</sub>
+
+- **Native Opus 1.6.1 with neural packet-loss recovery.**
+  > <sub>The managed Opus port has been replaced with native libopus 1.6.1. You get better voice quality at the same bitrate, plus deep PLC (neural concealment of lost audio) and DRED (Deep REDundancy), which reconstructs up to roughly 400 ms of dropped audio from later packets. Brief connection hiccups no longer chop your voice the way they used to.</sub>
+
+- **DeepFilterNet 3 noise suppression.**
+  > <sub>RNNoise has been replaced with DeepFilterNet 3, a much stronger neural denoiser. Keyboard, fans, and background chatter are removed far more cleanly while your actual voice stays natural. It is still toggleable under Noise Suppression.</sub>
+
+- **Much smoother voice.**
+  > <sub>Fixed audio that could sound choppy or cut in and out. A new low-latency playback path plus an adaptive playout buffer that sizes itself to your connection: snappy and low-delay on a clean link, automatically adding cushion when the network gets bursty, then relaxing again when it clears.</sub>
+
+- **Smarter jitter buffer.**
+  > <sub>Playout depth is driven by a real per-player jitter estimate and is aware of FEC/DRED recovery frames, so unstable connections stay smooth while stable ones keep low delay.</sub>
+
+- **More reliable peer connections.**
+  > <sub>Updated the WebRTC voice transport (SIPSorcery 10.0.6 to 10.0.10, the latest release). Voice peer connections establish more reliably and stay stable, so players connect to each other faster and drop less often.</sub>
+
+- **Per-situation voice filters restored.**
+  > <sub>Radio voices get a crisp radio-band filter, voices heard through walls or while occluded are muffled with a subtle next-room reverb, and ghost voices heard by the living (Medium and similar roles) get a ghostly reverb. Ghosts talking to each other still sound completely normal.</sub>
+
+- **Android parity.**
+  > <sub>The Android build now runs the same voice mixer as desktop: per-situation filters, reverb, click-free fades, and gliding volume and stereo position.</sub>
+
+- **Centered speaking bar with automatic rows.**
+  > <sub>The speaking bar is now centered on screen and automatically wraps the talking players into multiple rows when there are too many to fit one line, so names always stay on-screen and readable instead of running off the edge.</sub>
+
+- **Under the hood.**
+  > <sub>Hardened the native-library loaders (hash-validated extraction, proper cleanup), removed unused audio components, and documented all bundled third-party library licenses.</sub>
+
 ## Perfect Comms v3.0.0
 
 Perfect Comms is now fully standalone: no Reactor or MiraAPI required. This release also brings a rebuilt in-game settings menu, fully rebindable keyboard and mouse controls, hardware echo cancellation, a reworked speaking bar, another round of audio-reliability fixes, and a public mod-integration API so other mods can register custom voice behaviours without forking Perfect Comms.
