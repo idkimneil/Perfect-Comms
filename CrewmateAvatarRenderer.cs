@@ -64,6 +64,27 @@ internal static class CrewmateAvatarRenderer
     }
     private static readonly Dictionary<byte, CachedOutfit> OutfitCache = new();
 
+    // Set per-frame by the speaking-bar overlay. True when the bar is a roster (fixed all-players mode), where
+    // the avatar should show each player's real identity, never their live in-world disguise -- same rule as a
+    // meeting. A meeting is always treated as real-identity regardless of this flag.
+    internal static bool PreferRealIdentity;
+
+    private static bool ShowRealIdentity => PreferRealIdentity || MeetingHud.Instance != null;
+
+    // True when the player's live outfit is a disguise (morph/shapeshift/mimic) that differs from their real
+    // default outfit. Used to suppress the live (disguised) cosmetics when the bar should show real identity.
+    private static bool IsDisguised(PlayerControl pc)
+    {
+        try
+        {
+            var cur = pc.CurrentOutfit;
+            if (cur == null) return false;
+            var def = pc.Data.DefaultOutfit;
+            return cur.HatId != def.HatId || cur.SkinId != def.SkinId || cur.VisorId != def.VisorId || cur.ColorId != def.ColorId;
+        }
+        catch { return false; }
+    }
+
     public static bool TryCreate(byte playerId, PlayerControl pc, Transform parent, out GameObject? iconGO)
     {
         iconGO = null;
@@ -222,6 +243,10 @@ internal static class CrewmateAvatarRenderer
     {
         try
         {
+            // Showing real identity (meeting / fixed roster) but the player is disguised: the live cosmetics layer
+            // still wears the morph's hat/skin/visor, so don't bake them. Real body colour + no cosmetics beats a
+            // morphed disguise leaking through.
+            if (ShowRealIdentity && IsDisguised(pc)) return;
             var c = pc.cosmetics;
             if (c == null) return;
             var outfit = GetDisplayOutfit(pc);
@@ -693,7 +718,7 @@ internal static class CrewmateAvatarRenderer
 
     private static int GetPlayerColorId(PlayerControl pc)
     {
-        if (MeetingHud.Instance != null)
+        if (ShowRealIdentity)
         {
             try { return GetDisplayOutfit(pc).ColorId; } catch { }
         }
@@ -719,8 +744,8 @@ internal static class CrewmateAvatarRenderer
     {
         try
         {
-            // In a meeting the bar matches the meeting UI (real identity); concealed players still gray via IsConcealed.
-            if (MeetingHud.Instance != null) return pc.Data.DefaultOutfit;
+            // Meeting or fixed-roster bar shows real identity (concealed players still gray via IsConcealed).
+            if (ShowRealIdentity) return pc.Data.DefaultOutfit;
             return pc.CurrentOutfit ?? pc.Data.DefaultOutfit;
         }
         catch

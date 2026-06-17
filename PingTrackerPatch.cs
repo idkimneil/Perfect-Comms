@@ -244,7 +244,25 @@ public static class PingTrackerPatch
             if (_slots.TryGetValue(id, out var existing))
             {
                 if (existing.IconGO == null)
+                {
                     TryCreateSlotIcon(id, existing);
+                }
+                else if (existing.Fingerprint != GetFingerprint(id))
+                {
+                    // A non-speaking roster slot still has to follow identity/concealment changes (comms
+                    // sabotage clearing, a morph the roster should ignore) — the active-speaker loop never
+                    // re-fingerprints these, so rebuild here when the live fingerprint drifts.
+                    TryCreateSlotIcon(id, existing, replaceExisting: true);
+                    UpdateSlotLabel(existing, player);
+                    continue;
+                }
+                else if (!existing.CosmeticsComplete && player != null && CrewmateAvatarRenderer.OutfitCosmeticsResolved(player))
+                {
+                    CrewmateAvatarRenderer.TryRefreshOutfitCosmetics(existing.IconGO, player, id);
+                    existing.CosmeticsComplete = true;
+                    _layoutDirty = true;
+                    _sortingDirty = true;
+                }
                 if (existing.LabelTMP != null)
                 {
                     string liveName = GetDisplayName(player);
@@ -399,6 +417,8 @@ public static class PingTrackerPatch
 
             var snapshot = room?.CurrentSnapshot;
             UpdatePubliclyDead(snapshot);
+            // Fixed all-players is a roster: show real identities, never live disguises (a meeting forces this too).
+            CrewmateAvatarRenderer.PreferRealIdentity = _fixedAllPlayers;
             bool fixedActive = _fixedAllPlayers && snapshot != null && MeetingHud.Instance == null;
 
             foreach (var kv in _slots)
@@ -1469,7 +1489,7 @@ public static class PingTrackerPatch
 
     private static int GetPlayerColorId(PlayerControl pc)
     {
-        if (MeetingHud.Instance != null)
+        if (MeetingHud.Instance != null || _fixedAllPlayers)
         {
             try { return GetDisplayOutfit(pc).ColorId; } catch { }
         }
@@ -1495,8 +1515,8 @@ public static class PingTrackerPatch
     {
         try
         {
-            // Match the meeting UI / avatar: in a meeting the bar shows the real outfit, never the live disguise.
-            if (MeetingHud.Instance != null) return pc.Data.DefaultOutfit;
+            // Match the avatar: meeting or fixed-roster bar shows the real outfit, never the live disguise.
+            if (MeetingHud.Instance != null || _fixedAllPlayers) return pc.Data.DefaultOutfit;
             return pc.CurrentOutfit ?? pc.Data.DefaultOutfit;
         }
         catch
