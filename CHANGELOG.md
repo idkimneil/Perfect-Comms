@@ -1,8 +1,8 @@
 # Changelog
 
-## Perfect Comms v3.0.1
+## Perfect Comms v3.1.0
 
-Perfect Comms v3.0.1 is a deep audio-quality release. The entire voice engine has been rebuilt around the BASS audio library, a native Opus 1.6.1 codec with neural packet-loss recovery, and DeepFilterNet 3 noise suppression, with a new adaptive playout buffer that makes voice noticeably smoother on any connection. It also updates the WebRTC transport for more reliable peer connections, restores the per-situation radio, wall-occlusion, and ghost voice filters with proper reverb, and centers the speaking bar with automatic row wrapping.
+Perfect Comms v3.1.0 is a deep audio-quality release. The entire voice engine has been rebuilt around the BASS audio library, a native Opus 1.6.1 codec with neural packet-loss recovery, and DeepFilterNet 3 noise suppression, with a new adaptive playout buffer that makes voice noticeably smoother on any connection. It also updates the WebRTC transport for more reliable peer connections, restores the per-situation radio, wall-occlusion, and ghost voice filters with proper reverb, and centers the speaking bar with automatic row wrapping.
 
 ### What's Changed
 
