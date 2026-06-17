@@ -1,3 +1,4 @@
+#if WINDOWS
 using System;
 using System.IO;
 using System.Reflection;
@@ -40,35 +41,7 @@ internal static class BassRuntime
     }
 
     private static string ExtractNativeLibrary(string resourceName, string fileName)
-    {
-        var dir = Path.Combine(ResolveBaseDirectory(), "cache", "PerfectComms", "native", ArchitectureLabel);
-        Directory.CreateDirectory(dir);
-        var target = Path.Combine(dir, fileName);
-
-        var assembly = Assembly.GetExecutingAssembly();
-        using var stream = assembly.GetManifestResourceStream(resourceName)
-            ?? throw new FileNotFoundException($"Missing embedded resource {resourceName}");
-
-        if (File.Exists(target) && new FileInfo(target).Length == stream.Length)
-            return target;
-
-        var temp = $"{target}.{Environment.ProcessId}.tmp";
-        using (var output = new FileStream(temp, FileMode.Create, FileAccess.Write, FileShare.None))
-            stream.CopyTo(output);
-
-        try
-        {
-            File.Move(temp, target, true);
-        }
-        catch (IOException)
-        {
-            if (!(File.Exists(target) && new FileInfo(target).Length == stream.Length))
-                throw;
-            try { File.Delete(temp); } catch { }
-        }
-
-        return target;
-    }
+        => NativeLibraryCache.Extract(Assembly.GetExecutingAssembly(), resourceName, fileName, ArchitectureLabel, ResolveBaseDirectory());
 
     private static string ResolveBaseDirectory()
     {
@@ -160,3 +133,4 @@ internal static class BassRuntime
         return error == Errors.Already;
     }
 }
+#endif

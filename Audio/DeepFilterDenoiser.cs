@@ -172,29 +172,7 @@ internal sealed unsafe class DeepFilterDenoiser : INoiseSuppressor
         => Marshal.GetDelegateForFunctionPointer<T>(NativeLibrary.GetExport(_nativeHandle, name));
 
     private static string ExtractNativeLibrary()
-    {
-        var dir = Path.Combine(ResolveBaseDirectory(), "cache", "PerfectComms", "native", "x64");
-        Directory.CreateDirectory(dir);
-        var target = Path.Combine(dir, NativeFileName);
-
-        var assembly = Assembly.GetExecutingAssembly();
-        using var stream = assembly.GetManifestResourceStream(ResourceName)
-            ?? throw new FileNotFoundException($"Missing embedded resource {ResourceName}");
-
-        if (File.Exists(target) && new FileInfo(target).Length == stream.Length)
-            return target;
-
-        var temp = $"{target}.{Environment.ProcessId}.tmp";
-        using (var output = new FileStream(temp, FileMode.Create, FileAccess.Write, FileShare.None))
-            stream.CopyTo(output);
-        try { File.Move(temp, target, true); }
-        catch (IOException)
-        {
-            if (!(File.Exists(target) && new FileInfo(target).Length == stream.Length)) throw;
-            try { File.Delete(temp); } catch { }
-        }
-        return target;
-    }
+        => NativeLibraryCache.Extract(Assembly.GetExecutingAssembly(), ResourceName, NativeFileName, "x64", ResolveBaseDirectory());
 
     private static string ResolveBaseDirectory()
     {

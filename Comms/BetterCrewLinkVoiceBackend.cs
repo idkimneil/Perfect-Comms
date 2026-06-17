@@ -1322,6 +1322,7 @@ internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
 #endif
         lock (_captureFrameSync)
             _micPreprocessor.Dispose();
+        try { _encoder.Dispose(); } catch { }
         var socket = _socket;
         _socket = null;
         if (socket != null)
@@ -3646,6 +3647,7 @@ internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
             ClientId = clientId;
             PlaybackGroupId = playbackGroupId;
             _tailFlushTimer = new Timer(static state => ((PeerConnection)state!).FlushBufferedVoiceFromTimer(), this, Timeout.InfiniteTimeSpan, Timeout.InfiniteTimeSpan);
+            _jitterBuffer.DredCapable = Decoder.SupportsDred;
             MuteAll();
         }
 

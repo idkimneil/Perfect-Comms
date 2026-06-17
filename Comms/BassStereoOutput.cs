@@ -1,3 +1,4 @@
+#if WINDOWS
 using System;
 using System.Runtime.InteropServices;
 using ManagedBass;
@@ -64,3 +65,4 @@ internal sealed class BassStereoOutput : IDisposable
 
     public void Dispose() => Stop();
 }
+#endif

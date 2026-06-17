@@ -66,19 +66,7 @@
 		</Reference>
 	</ItemGroup>
 
-	<ItemGroup>
-		<EmbeddedResource Include="$(NuGetPackageRoot)managedbass\4.0.2\lib\netstandard2.0\ManagedBass.dll">
-			<LogicalName>Lib.ManagedBass.dll</LogicalName>
-		</EmbeddedResource>
-		<EmbeddedResource Include="Libs\Concentus.dll">
-			<LogicalName>Lib.Concentus.dll</LogicalName>
-		</EmbeddedResource>
-		<EmbeddedResource Include="Libs\Interstellar.dll">
-			<LogicalName>Lib.Interstellar.dll</LogicalName>
-		</EmbeddedResource>
-		<EmbeddedResource Include="Libs\Interstellar.Messages.dll">
-			<LogicalName>Lib.Interstellar.Messages.dll</LogicalName>
-		</EmbeddedResource>
+	<ItemGroup Condition="'$(Configuration)' != 'Android'">
 		<EmbeddedResource Include="Libs\bass.x64.dll">
 			<LogicalName>Lib.bass.x64.dll</LogicalName>
 		</EmbeddedResource>
@@ -96,6 +84,21 @@
 		</EmbeddedResource>
 		<EmbeddedResource Include="Libs\speexdsp.x86.dll">
 			<LogicalName>Lib.speexdsp.x86.dll</LogicalName>
+		</EmbeddedResource>
+	</ItemGroup>
+
+	<ItemGroup>
+		<EmbeddedResource Include="$(NuGetPackageRoot)managedbass\4.0.2\lib\netstandard2.0\ManagedBass.dll">
+			<LogicalName>Lib.ManagedBass.dll</LogicalName>
+		</EmbeddedResource>
+		<EmbeddedResource Include="Libs\Concentus.dll">
+			<LogicalName>Lib.Concentus.dll</LogicalName>
+		</EmbeddedResource>
+		<EmbeddedResource Include="Libs\Interstellar.dll">
+			<LogicalName>Lib.Interstellar.dll</LogicalName>
+		</EmbeddedResource>
+		<EmbeddedResource Include="Libs\Interstellar.Messages.dll">
+			<LogicalName>Lib.Interstellar.Messages.dll</LogicalName>
 		</EmbeddedResource>
 		<EmbeddedResource Include="$(NuGetPackageRoot)sipsorcery\10.0.9\lib\net6.0\SIPSorcery.dll">
 			<LogicalName>Lib.SIPSorcery.dll</LogicalName>

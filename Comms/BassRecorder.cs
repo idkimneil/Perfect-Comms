@@ -1,3 +1,4 @@
+#if WINDOWS
 using System;
 using System.Runtime.InteropServices;
 using ManagedBass;
@@ -63,3 +64,4 @@ internal sealed class BassRecorder : IDisposable
 
     public void Dispose() => Stop();
 }
+#endif

@@ -221,6 +221,8 @@ internal sealed class BclVoiceJitterBuffer
     // FEC+PLC run length since the last real Audio frame; caps invented audio at ~100 ms (Fix 2b-2).
     private int _consecutiveConcealed;
     private const int MaxConsecutiveConcealFrames = 5;
+    private const int MaxConsecutiveDredFrames = 20;
+    public bool DredCapable { get; set; }
     private DateTime _lastEnqueueUtc = DateTime.MinValue;
     // True per-peer arrival-jitter estimator (RFC3550-style mean-abs-deviation, in SAMPLE units). Measured
     // here at Enqueue from packet.Sequence + a MONOTONIC receive timestamp (Stopwatch, not UtcNow) so it
@@ -456,7 +458,7 @@ internal sealed class BclVoiceJitterBuffer
 
             var next = _packets[nextSequence.Value];
             // Long real gap: snap forward instead of inventing > ~100 ms of fake audio (Fix 2b-2).
-            if (_consecutiveConcealed >= MaxConsecutiveConcealFrames)
+            if (_consecutiveConcealed >= (DredCapable ? MaxConsecutiveDredFrames : MaxConsecutiveConcealFrames))
             {
                 System.Threading.Interlocked.Add(ref _cumulativeLostFrames,
                     Math.Min(Distance(_expectedSequence, nextSequence.Value), SnapLossReportCapFrames));
