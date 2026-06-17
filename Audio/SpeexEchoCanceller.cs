@@ -243,37 +243,7 @@ internal sealed unsafe class SpeexEchoCanceller : IDisposable
         => Marshal.GetDelegateForFunctionPointer<T>(NativeLibrary.GetExport(_nativeHandle, name));
 
     private static string ExtractNativeLibrary()
-    {
-        var dir = Path.Combine(ResolveBaseDirectory(), "cache", "PerfectComms", "native", ArchitectureLabel);
-        Directory.CreateDirectory(dir);
-        var target = Path.Combine(dir, NativeFileName);
-
-        var assembly = Assembly.GetExecutingAssembly();
-        using var stream = assembly.GetManifestResourceStream(ResourceName)
-            ?? throw new FileNotFoundException($"Missing embedded resource {ResourceName}");
-
-        if (File.Exists(target) && new FileInfo(target).Length == stream.Length)
-            return target;
-
-        // Per-process temp name so two game instances extracting at once don't collide on one .tmp (FileShare.None).
-        var temp = $"{target}.{Environment.ProcessId}.tmp";
-        using (var output = new FileStream(temp, FileMode.Create, FileAccess.Write, FileShare.None))
-            stream.CopyTo(output);
-
-        try
-        {
-            File.Move(temp, target, true);
-        }
-        catch (IOException)
-        {
-            // Another instance already published an identical target (and may hold it open); reuse it.
-            if (!(File.Exists(target) && new FileInfo(target).Length == stream.Length))
-                throw;
-            try { File.Delete(temp); } catch { }
-        }
-
-        return target;
-    }
+        => NativeLibraryCache.Extract(Assembly.GetExecutingAssembly(), ResourceName, NativeFileName, ArchitectureLabel, ResolveBaseDirectory());
 
     // Degrade to the app base directory when BepInEx.Core is absent (headless / unit tests). The Paths access
     // lives in a separate non-inlined method so its JIT-time assembly-load failure surfaces at the call site

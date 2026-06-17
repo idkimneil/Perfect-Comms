@@ -244,7 +244,25 @@ public static class PingTrackerPatch
             if (_slots.TryGetValue(id, out var existing))
             {
                 if (existing.IconGO == null)
+                {
                     TryCreateSlotIcon(id, existing);
+                }
+                else if (existing.Fingerprint != GetFingerprint(id))
+                {
+                    // A non-speaking roster slot still has to follow identity/concealment changes (comms
+                    // sabotage clearing, a morph the roster should ignore) — the active-speaker loop never
+                    // re-fingerprints these, so rebuild here when the live fingerprint drifts.
+                    TryCreateSlotIcon(id, existing, replaceExisting: true);
+                    UpdateSlotLabel(existing, player);
+                    continue;
+                }
+                else if (!existing.CosmeticsComplete && player != null && CrewmateAvatarRenderer.OutfitCosmeticsResolved(player))
+                {
+                    CrewmateAvatarRenderer.TryRefreshOutfitCosmetics(existing.IconGO, player, id);
+                    existing.CosmeticsComplete = true;
+                    _layoutDirty = true;
+                    _sortingDirty = true;
+                }
                 if (existing.LabelTMP != null)
                 {
                     string liveName = GetDisplayName(player);
@@ -399,6 +417,8 @@ public static class PingTrackerPatch
 
             var snapshot = room?.CurrentSnapshot;
             UpdatePubliclyDead(snapshot);
+            // Fixed all-players is a roster: show real identities, never live disguises (a meeting forces this too).
+            CrewmateAvatarRenderer.PreferRealIdentity = _fixedAllPlayers;
             bool fixedActive = _fixedAllPlayers && snapshot != null && MeetingHud.Instance == null;
 
             foreach (var kv in _slots)
@@ -1164,17 +1184,29 @@ public static class PingTrackerPatch
         else
         {
             float slotPitch = SlotWidth;
+            int count = 0;
             foreach (var id in _slotOrder)
                 if (_slots.TryGetValue(id, out var s))
+                {
                     slotPitch = Mathf.Max(slotPitch, RequiredSlotPitch(s));
-            float iconY = _layoutAnchoredBottom ? BottomNameLift : 0f;
-            float labelY = _layoutAnchoredBottom ? BottomNameLift - LabelOffset : -LabelOffset;
+                    count++;
+                }
+            int perRow = MaxSlotsPerRow(slotPitch, count);
+            float rowPitch = _namePosition == SpeakingBarNamePosition.Top
+                ? SlotHeight + TopNameExtraPitch : SlotHeight;
+            float baseY = _layoutAnchoredBottom ? BottomNameLift : 0f;
             float cMinX = 0f, cMaxX = 0f, cMinY = 0f, cMaxY = 0f;
             int i = 0;
             foreach (var id in _slotOrder)
             {
                 if (!_slots.TryGetValue(id, out var slot)) continue;
-                float x = i * slotPitch;
+                int row = i / perRow;
+                int col = i % perRow;
+                int rowCount = Mathf.Min(perRow, count - row * perRow);
+                float rowOffset = (rowCount - 1) * slotPitch * 0.5f;
+                float x = col * slotPitch - rowOffset;
+                float iconY = baseY + (_layoutAnchoredBottom ? row * rowPitch : -row * rowPitch);
+                float labelY = iconY - LabelOffset;
                 if (slot.IconGO   != null)
                     slot.IconGO.transform.localPosition  = new Vector3(x, iconY, -100f);
                 if (slot.RingGO   != null)
@@ -1195,14 +1227,24 @@ public static class PingTrackerPatch
             {
                 if (_namePosition is SpeakingBarNamePosition.Top or SpeakingBarNamePosition.Bottom)
                 {
-                    float centre = (i - 1) * slotPitch * 0.5f;
-                    float half = Mathf.Max(centre - cMinX, cMaxX - centre);
-                    cMinX = centre - half;
-                    cMaxX = centre + half;
+                    float half = Mathf.Max(-cMinX, cMaxX);
+                    cMinX = -half;
+                    cMaxX = half;
                 }
                 UpdateBackdrop(cMinX, cMaxX, cMinY, cMaxY);
             }
         }
+    }
+
+    private static int MaxSlotsPerRow(float slotPitch, int count)
+    {
+        if (count <= 1) return 1;
+        var cam = Camera.main;
+        if (cam == null || !cam.orthographic || slotPitch <= 0.0001f) return count;
+        float worldWidth = 2f * cam.orthographicSize * cam.aspect * (1f - 2f * ManualViewportPadding);
+        float localWidth = worldWidth / Mathf.Max(_barScale, 0.0001f);
+        int fit = Mathf.FloorToInt(localWidth / slotPitch);
+        return Mathf.Clamp(fit, 1, count);
     }
 
     private static float RequiredSlotPitch(SpeakerSlot slot)
@@ -1411,7 +1453,8 @@ public static class PingTrackerPatch
             outfit.HatId,
             outfit.SkinId,
             outfit.VisorId,
-            outfit.PlayerName);
+            outfit.PlayerName,
+            CrewmateAvatarRenderer.IsConcealed(pc));
     }
 
     // Color-blind fingerprint compare: true when at most the body ColorId differs. Lets the consumer
@@ -1421,7 +1464,8 @@ public static class PingTrackerPatch
         && a.HatId == b.HatId
         && a.SkinId == b.SkinId
         && a.VisorId == b.VisorId
-        && a.PlayerName == b.PlayerName;
+        && a.PlayerName == b.PlayerName
+        && a.Concealed == b.Concealed;
 
     // Built once per frame so FindPlayer is O(1) instead of re-scanning the IL2CPP list per speaker.
     private static void RebuildPlayerLookup()
@@ -1445,6 +1489,10 @@ public static class PingTrackerPatch
 
     private static int GetPlayerColorId(PlayerControl pc)
     {
+        if (MeetingHud.Instance != null || _fixedAllPlayers)
+        {
+            try { return GetDisplayOutfit(pc).ColorId; } catch { }
+        }
         int bodyColor;
         try { bodyColor = pc.cosmetics.bodyMatProperties.ColorId; }
         catch { try { return GetDisplayOutfit(pc).ColorId; } catch { return 0; } }
@@ -1467,6 +1515,8 @@ public static class PingTrackerPatch
     {
         try
         {
+            // Match the avatar: meeting or fixed-roster bar shows the real outfit, never the live disguise.
+            if (MeetingHud.Instance != null || _fixedAllPlayers) return pc.Data.DefaultOutfit;
             return pc.CurrentOutfit ?? pc.Data.DefaultOutfit;
         }
         catch
@@ -1548,7 +1598,7 @@ public static class PingTrackerPatch
 
     // ── Data types ─────────────────────────────────────────────────────────────
     private readonly record struct OutfitFingerprint(
-        int OutfitTypeId, int ColorId, string HatId, string SkinId, string VisorId, string PlayerName);
+        int OutfitTypeId, int ColorId, string HatId, string SkinId, string VisorId, string PlayerName, bool Concealed);
 
     private class SpeakerSlot
     {

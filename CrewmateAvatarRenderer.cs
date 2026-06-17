@@ -4,6 +4,7 @@ using System.Reflection;
 using Il2CppInterop.Runtime.Injection;
 using UnityEngine;
 using Object = UnityEngine.Object;
+using VoiceChatPlugin.VoiceChat;
 
 namespace VoiceChatPlugin;
 
@@ -62,6 +63,27 @@ internal static class CrewmateAvatarRenderer
         }
     }
     private static readonly Dictionary<byte, CachedOutfit> OutfitCache = new();
+
+    // Set per-frame by the speaking-bar overlay. True when the bar is a roster (fixed all-players mode), where
+    // the avatar should show each player's real identity, never their live in-world disguise -- same rule as a
+    // meeting. A meeting is always treated as real-identity regardless of this flag.
+    internal static bool PreferRealIdentity;
+
+    private static bool ShowRealIdentity => PreferRealIdentity || MeetingHud.Instance != null;
+
+    // True when the player's live outfit is a disguise (morph/shapeshift/mimic) that differs from their real
+    // default outfit. Used to suppress the live (disguised) cosmetics when the bar should show real identity.
+    private static bool IsDisguised(PlayerControl pc)
+    {
+        try
+        {
+            var cur = pc.CurrentOutfit;
+            if (cur == null) return false;
+            var def = pc.Data.DefaultOutfit;
+            return cur.HatId != def.HatId || cur.SkinId != def.SkinId || cur.VisorId != def.VisorId || cur.ColorId != def.ColorId;
+        }
+        catch { return false; }
+    }
 
     public static bool TryCreate(byte playerId, PlayerControl pc, Transform parent, out GameObject? iconGO)
     {
@@ -221,6 +243,9 @@ internal static class CrewmateAvatarRenderer
     {
         try
         {
+            // Showing real identity (meeting / fixed roster) but the player is disguised: the live cosmetics layer
+            // wears the morph, so rebuild the real hat/skin/visor from the outfit cached while they were undisguised.
+            if (ShowRealIdentity && IsDisguised(pc)) { AddCachedRealCosmetics(root, pc.PlayerId, capture); return; }
             var c = pc.cosmetics;
             if (c == null) return;
             var outfit = GetDisplayOutfit(pc);
@@ -280,6 +305,23 @@ internal static class CrewmateAvatarRenderer
         }
     }
 
+    // Adds the player's real hat/skin/visor from the outfit cached while they were undisguised. Used when a
+    // disguised player must be shown as themselves (meeting / fixed roster) but the live body wears the morph.
+    // Falls back to no cosmetics (real-colour body only) if we never captured them undisguised this game.
+    private static void AddCachedRealCosmetics(Transform root, byte playerId, List<CachedCosmeticLayer>? capture)
+    {
+        if (!OutfitCache.TryGetValue(playerId, out var outfit) || outfit.Concealed) return;
+        foreach (var layer in outfit.Layers)
+        {
+            if (layer.Sprite == null) continue;
+            var sr = AddSprite(root, layer.Name, layer.Sprite, layer.LocalPos, Quaternion.identity, CosmeticScale, layer.Color, layer.Order);
+            sr.flipX = false;
+            sr.flipY = layer.FlipY;
+            if (layer.Material != null) sr.sharedMaterial = layer.Material;
+            capture?.Add(layer);
+        }
+    }
+
     // Rebuilds the cosmetic layers in place on an existing icon (no body destroy/recreate). Concealed -> none.
     internal static void TryRefreshOutfitCosmetics(GameObject? iconRoot, PlayerControl? pc, byte playerId)
     {
@@ -299,6 +341,8 @@ internal static class CrewmateAvatarRenderer
     // most once per speaker per outfit change -- never per frame.
     private static void CacheOutfit(byte playerId, PlayerControl pc, List<CachedCosmeticLayer> layers)
     {
+        // Never overwrite the cache with a disguise; keep the last real outfit so a meeting/roster can rebuild it.
+        if (IsDisguised(pc)) return;
         bool concealed = IsConcealed(pc);
         int colorId = GetPlayerColorId(pc);
         OutfitCache[playerId] = new CachedOutfit(
@@ -382,9 +426,22 @@ internal static class CrewmateAvatarRenderer
     // type 0 is additionally treated as concealed when its outfit looks camouflaged (HNS global camo stamps the
     // name "???"; Venerer camo empties all cosmetics and blanks the name). A normal type-0 player keeps a real
     // (non-empty) name, so is never falsely concealed.
+    // Comms sabotage hides everyone in the bar (you can't ID who is talking while comms is down). This outranks
+    // the meeting real-identity reveal, so a meeting called while comms is still active stays grey.
+    private static bool CommsConcealmentActive()
+    {
+        try
+        {
+            var snap = VoiceChatRoom.Current?.CurrentSnapshot;
+            return snap != null && snap.CommsSabotageActive && VoiceRoomSettingsState.Current.CommsSabDisables;
+        }
+        catch { return false; }
+    }
+
     internal static bool IsConcealed(PlayerControl? pc)
     {
         if (pc?.Data == null) return false;
+        if (CommsConcealmentActive()) return true;
         try
         {
             int outfitType = (int)pc.CurrentOutfitType;
@@ -679,6 +736,10 @@ internal static class CrewmateAvatarRenderer
 
     private static int GetPlayerColorId(PlayerControl pc)
     {
+        if (ShowRealIdentity)
+        {
+            try { return GetDisplayOutfit(pc).ColorId; } catch { }
+        }
         int bodyColor;
         try { bodyColor = pc.cosmetics.bodyMatProperties.ColorId; }
         catch { try { return GetDisplayOutfit(pc).ColorId; } catch { return 0; } }
@@ -701,6 +762,8 @@ internal static class CrewmateAvatarRenderer
     {
         try
         {
+            // Meeting or fixed-roster bar shows real identity (concealed players still gray via IsConcealed).
+            if (ShowRealIdentity) return pc.Data.DefaultOutfit;
             return pc.CurrentOutfit ?? pc.Data.DefaultOutfit;
         }
         catch

@@ -5,9 +5,6 @@ using System.Linq;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
-using Concentus.Enums;
-using Concentus.Structs;
-using NAudio.Wave;
 using SIPSorcery.Net;
 using SocketIOClient;
 using UnityEngine;
@@ -25,10 +22,10 @@ internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
     private static readonly bool BclOpusUseInbandFec = true;   // arm LossResistant flag (sender) + the jitter-buffer Fec drain arm
     private static readonly int BclOpusPacketLossPercent = 15; // non-zero PLP so Opus embeds FEC redundancy in the wire frame
     private const int BclPlaybackLatencyMs = 60;
-    private const int BclJitterTargetDelayFrames = 4;
-    private const int BclJitterMaxBufferedFrames = 8;
-    private const int BclJitterMinTargetFrames = 2;
-    private const int BclJitterMaxTargetFrames = 6;
+    private const int BclJitterTargetDelayFrames = 2;
+    private const int BclJitterMaxBufferedFrames = 16;
+    private const int BclJitterMinTargetFrames = 1;
+    private const int BclJitterMaxTargetFrames = 3;
     private const int CodecAdaptIntervalFrames = 100;
     private const int PlpDeadbandPercent = 3;
     private const float RemoteSpeakingThreshold = 0.004f;
@@ -45,9 +42,6 @@ internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
     private static readonly byte[] RadioStateMagic = [(byte)'P', (byte)'C', (byte)'R', (byte)'D'];
     private static readonly RTCIceServer[] DefaultIceServers = [new() { urls = "stun:stun.l.google.com:19302" }];
 
-    private readonly BclMonoPlaybackGraph _leftPlayback;
-    private readonly BclMonoPlaybackGraph _rightPlayback;
-    private readonly BclStereoPlaybackProvider _playbackProvider;
     private readonly MicPreprocessor _micPreprocessor = new();
     private readonly ConcurrentQueue<Action> _mainThreadActions = new();
     private readonly object _captureFrameSync = new();
@@ -153,15 +147,14 @@ internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
     // echo-canceller's reference delay can't drift unbounded relative to capture.
     private readonly FarEndReference _farEndReference = new(AudioHelpers.ClockRate / 2, AudioHelpers.ClockRate / 5);
     private int _captureFrameSamples;
-    // Bumped under _captureFrameSync on every capture stop/restart. A WaveInEvent callback that was already
+    // Bumped under _captureFrameSync on every capture stop/restart. A BassRecorder callback that was already
     // dispatched before teardown snapshots the epoch on entry and is dropped once it acquires the lock, so a
     // stale device's frame can never push samples into state the next device is about to reuse.
     private int _captureEpoch;
 
     private SocketIOClient.SocketIO? _socket;
 #if WINDOWS
-    private IWaveIn? _waveIn;
-    private IWavePlayer? _waveOut;
+    private BassRecorder? _bassRecorder;
     private readonly object _captureWorkerSync = new();
     private Task _captureWorker = Task.CompletedTask;
     private bool _captureDesiredRunning;
@@ -193,7 +186,7 @@ internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
     private AndroidMicrophone? _androidMicrophone;
     private AndroidSampleProviderSpeaker? _androidSpeaker;
 #endif
-    private OpusEncoder _encoder = CreateEncoder();
+    private IVoiceEncoder _encoder = CreateEncoder();
     private Timer? _syntheticMicTimer;
     private string _lastMicDeviceName = string.Empty;
     private volatile float _micVolume = 1f;
@@ -204,6 +197,10 @@ internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
     private volatile bool _localSpeaking;
     private bool _microphoneReady;
     private bool _speakerReady;
+    private BclVoiceMixer? _voiceMixer;
+#if WINDOWS
+    private BassStereoOutput? _bassOut;
+#endif
     private VoiceCaptureRuntimeOptions _captureOptions;
     private const float DeadInputPeakThreshold = 0.00012f;
     private const float LiveSignalPeakThreshold = 0.005f;
@@ -211,7 +208,7 @@ internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
     private bool _captureLiveSignalSeen;
     private int _deadInputFrames;
     private int _deadInputDetected;
-    private int _lastOpenedWaveInDevice = -1;
+    private int _lastOpenedRecordDevice = -1;
 
     // Never-live + 10s of pure quantization noise = dead feed; a device that produced speech once is trusted (quiet != dead).
     // Diagnostics only — device choice is always the user's; the app never switches capture devices on its own.
@@ -234,7 +231,7 @@ internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
         _deadInputFrames = 0;
         Interlocked.Exchange(ref _deadInputDetected, 1);
         VoiceDiagnostics.Log("bcl.mic.dead-input",
-            $"device=\"{_lastMicDeviceName}\" openedWaveInDevice={Volatile.Read(ref _lastOpenedWaveInDevice)} peak={peak:0.000000}");
+            $"device=\"{_lastMicDeviceName}\" recordDevice={Volatile.Read(ref _lastOpenedRecordDevice)} peak={peak:0.000000}");
     }
     private double _syntheticTonePhase;
     private int _syntheticFrames;
@@ -257,18 +254,6 @@ internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
         RoomCode = roomCode;
         Region = region;
         ServerUrl = VoiceEndpointSettings.NormalizeBetterCrewLinkServerUrl(serverUrl);
-
-        _leftPlayback = new BclMonoPlaybackGraph(
-            AudioHelpers.PlaybackPrebufferSamples,
-            AudioHelpers.PlaybackPrebufferSamples * 3,
-            enableRecoveryPrebuffer: true,
-            instancePrebufferSamples: AudioHelpers.PlaybackRecoveryPrebufferSamples);
-        _rightPlayback = new BclMonoPlaybackGraph(
-            AudioHelpers.PlaybackPrebufferSamples,
-            AudioHelpers.PlaybackPrebufferSamples * 3,
-            enableRecoveryPrebuffer: true,
-            instancePrebufferSamples: AudioHelpers.PlaybackRecoveryPrebufferSamples);
-        _playbackProvider = new BclStereoPlaybackProvider(_leftPlayback.Endpoint, _rightPlayback.Endpoint, _farEndReference);
 
         ConnectSocket();
         WarmOpusCodec();
@@ -293,9 +278,7 @@ internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
         {
             try
             {
-#pragma warning disable CS0618
-                _ = new OpusDecoder(AudioHelpers.ClockRate, AudioHelpers.Channels);
-#pragma warning restore CS0618
+                VoiceCodec.CreateDecoder().Dispose();
             }
             catch (Exception ex)
             {
@@ -494,8 +477,6 @@ internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
     public void SetLoopBack(bool loopBack) { }
     public void SetMasterVolume(float volume)
     {
-        _leftPlayback.SetMasterVolume(volume);
-        _rightPlayback.SetMasterVolume(volume);
     }
     public void SetMicVolume(float volume)
     {
@@ -655,30 +636,23 @@ internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
             StopMicrophone($"restart:{reason}");
             _latchedMicChannel = 0;
             _micChannelSwitchStreak = 0;
-            var captureKind = "wavein";
-            var captureDevice = "mapper";
-            int waveInDevice = -1;
+            var captureKind = "bass";
+            var captureDevice = "default";
+            int recordDevice = -1;
             if (!_captureOptions.SyntheticMicToneEnabled)
             {
-                waveInDevice = ResolveWaveInDevice(_lastMicDeviceName);
-                Volatile.Write(ref _lastOpenedWaveInDevice, waveInDevice);
-                var waveIn = new WaveInEvent
+                BassRuntime.EnsureConfigured();
+                recordDevice = ResolveBassRecordDevice(_lastMicDeviceName);
+                Volatile.Write(ref _lastOpenedRecordDevice, recordDevice);
+                var recorder = new BassRecorder(ProcessBassMicFrame);
+                _bassRecorder = recorder;
+                captureKind = "bass";
+                captureDevice = ManagedBass.Bass.RecordGetDeviceInfo(recordDevice, out var rdi) ? rdi.Name : "default";
+                if (!recorder.Start(recordDevice))
                 {
-                    BufferMilliseconds = 20,
-                    NumberOfBuffers = 4,
-                    WaveFormat = new WaveFormat(AudioHelpers.ClockRate, 16, 1),
-                    DeviceNumber = waveInDevice,
-                };
-                _waveIn = waveIn;
-                captureKind = "wavein";
-                captureDevice = DescribeWaveInDevice(waveInDevice);
-            }
-
-            if (_waveIn != null)
-            {
-                _waveIn.DataAvailable += OnMicrophoneData;
-                _waveIn.RecordingStopped += OnMicrophoneStopped;
-                _waveIn.StartRecording();
+                    _bassRecorder = null;
+                    throw new InvalidOperationException($"bass record start failed: {ManagedBass.Bass.LastError}");
+                }
             }
 
             if (_captureOptions.SyntheticMicToneEnabled)
@@ -695,7 +669,7 @@ internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
             _farEndReference.Enabled = !_captureOptions.SyntheticMicToneEnabled;
             _micPreprocessor.ResetEchoCancellation();
             Interlocked.Exchange(ref _speakerTopologyFastUntilTicks, (DateTime.UtcNow + SpeakerTopologyFastWindow).Ticks);
-            VoiceDiagnostics.Log("bcl.mic", $"ready=true reason={reason} capture={captureKind} device=\"{_lastMicDeviceName}\" captureDevice=\"{captureDevice}\" captureFormat=\"{DescribeWaveFormat(_waveIn?.WaveFormat)}\" waveInDevice={waveInDevice} defaultWaveIn=\"{DescribeDefaultWaveInDevice()}\" waveInDevices=\"{DescribeWaveInDevices()}\" syntheticTone={_captureOptions.SyntheticMicToneEnabled} volume={_micVolume:0.00}");
+            VoiceDiagnostics.Log("bcl.mic", $"ready=true reason={reason} capture={captureKind} device=\"{_lastMicDeviceName}\" captureDevice=\"{captureDevice}\" captureFormat=\"48000Hz/float/mono\" recordDevice={recordDevice} recordDevices=\"{DescribeBassRecordDevices()}\" syntheticTone={_captureOptions.SyntheticMicToneEnabled} volume={_micVolume:0.00}");
         }
         catch (Exception ex)
         {
@@ -708,20 +682,17 @@ internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
     {
         StopSyntheticMicTone();
         _farEndReference.Enabled = false;
-        var waveIn = _waveIn;
-        var hadMic = waveIn != null || _microphoneReady;
-        _waveIn = null;
-        if (waveIn != null)
+        var recorder = _bassRecorder;
+        var hadMic = recorder != null || _microphoneReady;
+        _bassRecorder = null;
+        if (recorder != null)
         {
-            try { waveIn.DataAvailable -= OnMicrophoneData; } catch { }
-            try { waveIn.RecordingStopped -= OnMicrophoneStopped; } catch { }
-            try { waveIn.StopRecording(); } catch { }
-            try { waveIn.Dispose(); } catch { }
+            try { recorder.Dispose(); } catch { }
         }
         _microphoneReady = false;
         if (hadMic)
             Interlocked.Exchange(ref _speakerTopologyFastUntilTicks, (DateTime.UtcNow + SpeakerTopologyFastWindow).Ticks);
-        // Reset the native RNNoise preprocessor INSIDE the capture lock: a WaveInEvent callback can still be
+        // Reset the native RNNoise preprocessor INSIDE the capture lock: a BassRecorder callback can still be
         // mid-flight in ProcessMicrophoneFrameLocked -> TryApplyNoiseSuppression (native ProcessFrame on the
         // same state pointer Reset destroys). Holding _captureFrameSync makes the two mutually exclusive and
         // closes the use-after-free that crashed the game on fast device/mic switches.
@@ -776,54 +747,6 @@ internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
     }
 
 #if WINDOWS
-    private static int ResolveWaveInDevice(string deviceName)
-    {
-        var requested = NormalizeAudioDeviceName(deviceName);
-        if (!string.IsNullOrWhiteSpace(requested))
-            return ResolveWaveInDeviceByNormalizedName(requested);
-
-        return ResolveDefaultWaveInDevice();
-    }
-
-    private static int ResolveDefaultWaveInDevice()
-        => -1;
-
-    private static int ResolveWaveInDeviceByNormalizedName(string requested)
-    {
-        for (var i = 0; i < WaveInEvent.DeviceCount; i++)
-        {
-            var productName = NormalizeAudioDeviceName(WaveInEvent.GetCapabilities(i).ProductName);
-            if (DeviceNamesMatch(requested, productName))
-                return i;
-        }
-        VoiceDiagnostics.Log("bcl.mic", $"ready=false reason=device-miss requested=\"{requested}\" fallback=mapper waveInDevices=\"{DescribeWaveInDevices()}\"");
-        return -1;
-    }
-
-    private static string DescribeDefaultWaveInDevice()
-        => "mapper";
-
-    private static string DescribeWaveInDevice(int deviceNumber)
-    {
-        if (deviceNumber < 0) return "mapper";
-        try { return WaveInEvent.GetCapabilities(deviceNumber).ProductName ?? "unknown"; }
-        catch { return "unknown"; }
-    }
-
-    private static string DescribeWaveInDevices()
-    {
-        try
-        {
-            var names = new List<string>();
-            for (var i = 0; i < WaveInEvent.DeviceCount; i++)
-                names.Add($"{i}:{WaveInEvent.GetCapabilities(i).ProductName}");
-            return names.Count == 0 ? "none" : string.Join("|", names);
-        }
-        catch (Exception ex)
-        {
-            return $"error:{ex.Message}";
-        }
-    }
 
     private static string NormalizeAudioDeviceName(string? deviceName)
         => string.Join(" ", (deviceName ?? string.Empty)
@@ -837,44 +760,6 @@ internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
             actual.StartsWith(requested, StringComparison.Ordinal) ||
             requested.StartsWith(actual, StringComparison.Ordinal));
 
-    private static int ResolveWaveOutDevice(string? deviceName)
-    {
-        var requested = NormalizeAudioDeviceName(deviceName);
-        if (!string.IsNullOrWhiteSpace(requested))
-        {
-            for (var i = 0; i < WinMmOutputDevices.DeviceCount; i++)
-            {
-                var productName = NormalizeAudioDeviceName(WinMmOutputDevices.GetProductName(i));
-                if (DeviceNamesMatch(requested, productName))
-                    return i;
-            }
-            VoiceDiagnostics.Log("bcl.speaker", $"ready=false reason=device-miss requested=\"{requested}\" fallback=mapper outputDevices=\"{DescribeWaveOutDevices()}\"");
-        }
-
-        return -1;
-    }
-
-    private static string DescribeWaveOutDevice(int deviceNumber)
-    {
-        if (deviceNumber < 0) return "mapper";
-        try { return WinMmOutputDevices.GetProductName(deviceNumber); }
-        catch { return "unknown"; }
-    }
-
-    private static string DescribeWaveOutDevices()
-    {
-        try
-        {
-            var names = new List<string>();
-            for (var i = 0; i < WinMmOutputDevices.DeviceCount; i++)
-                names.Add($"{i}:{WinMmOutputDevices.GetProductName(i)}");
-            return names.Count == 0 ? "none" : string.Join("|", names);
-        }
-        catch (Exception ex)
-        {
-            return $"error:{ex.Message}";
-        }
-    }
 #endif
 
 #if ANDROID
@@ -961,11 +846,6 @@ internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
     }
 #endif
 
-    private static string DescribeWaveFormat(WaveFormat? format)
-    {
-        if (format == null) return "none";
-        return $"{format.Encoding}/{format.SampleRate}Hz/{format.BitsPerSample}bit/{format.Channels}ch";
-    }
 
     public void SetSpeaker(string deviceName)
     {
@@ -976,37 +856,10 @@ internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
                 _btProfileConflict = false;
             _lastSpeakerDeviceName = deviceName ?? string.Empty;
             _speakerRequested = true;
-            _speakerTopologySignature = DescribeWaveOutDevices();
-            var previousWaveOut = _waveOut;
-            _waveOut = null;
-            if (previousWaveOut != null)
-            {
-                try { previousWaveOut.PlaybackStopped -= OnPlaybackStopped; } catch { }
-                try { previousWaveOut.Stop(); } catch { }
-                try { previousWaveOut.Dispose(); } catch { }
-            }
-            var outputDevice = ResolveWaveOutDevice(deviceName);
-            _waveOut = new WaveOutEvent
-            {
-                DeviceNumber = outputDevice,
-                DesiredLatency = BclPlaybackLatencyMs,
-                NumberOfBuffers = 3,
-            };
-            _waveOut.PlaybackStopped += OnPlaybackStopped;
-            _waveOut.Init(_playbackProvider.ToWaveProvider());
-            _waveOut.Play();
-            // Drop stale far-end reference buffered against a previous output device/format.
-            _farEndReference.Reset();
-            _speakerReady = _waveOut.PlaybackState == PlaybackState.Playing;
-            _openedSpeakerDeviceNumber = outputDevice;
-            _openedSpeakerProductName = DescribeWaveOutDevice(outputDevice);
-            VoiceDiagnostics.Log("bcl.speaker", $"ready={_speakerReady} device=\"{deviceName}\" outputDevice=\"{DescribeWaveOutDevice(outputDevice)}\" outputDeviceNumber={outputDevice} sourceFormat=\"left={_leftPlayback.Endpoint.WaveFormat};right={_rightPlayback.Endpoint.WaveFormat}\" graphFormat=\"{_playbackProvider.WaveFormat}\" outputDevices=\"{DescribeWaveOutDevices()}\" latencyMs={BclPlaybackLatencyMs} splitMonoGraphs=true");
+            SetSpeakerBass(deviceName ?? string.Empty);
         }
         catch (Exception ex)
         {
-            try { _waveOut?.Stop(); } catch { }
-            try { _waveOut?.Dispose(); } catch { }
-            _waveOut = null;
             _speakerReady = false;
             _openedSpeakerDeviceNumber = int.MinValue;
             _openedSpeakerProductName = string.Empty;
@@ -1017,9 +870,14 @@ internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
         try
         {
             _androidSpeaker?.Dispose();
-            _androidSpeaker = new AndroidSampleProviderSpeaker(_playbackProvider);
+            var mixer = _voiceMixer ?? new BclVoiceMixer();
+            _voiceMixer = mixer;
+            _androidSpeaker = new AndroidSampleProviderSpeaker(mixer);
             _speakerReady = _androidSpeaker.IsPlaying;
-            VoiceDiagnostics.Log("bcl.speaker", $"ready={_speakerReady} device=\"{deviceName}\" sourceFormat=\"left={_leftPlayback.Endpoint.WaveFormat};right={_rightPlayback.Endpoint.WaveFormat}\" graphFormat=\"{_playbackProvider.WaveFormat}\" androidAudioSource=true");
+            lock (_peerSync)
+                foreach (var peer in _peersBySocket.Values)
+                    peer.SetMixer(mixer);
+            VoiceDiagnostics.Log("bcl.speaker", $"ready={_speakerReady} device=\"{deviceName}\" backend=android-managed");
         }
         catch (Exception ex)
         {
@@ -1035,31 +893,89 @@ internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
     }
 
 #if WINDOWS
-    // WinMM WaveOutEvent binds at open time and never re-resolves; the topology poll reopens it when the
-    // render-device list changes (default-device flips, USB (un)plug, Bluetooth A2DP<->HFP profile switches).
-    // Pinned devices follow too, guarded by a resolution diff so an unrelated list change never reopens them.
-    private void OnPlaybackStopped(object? sender, StoppedEventArgs e)
+    private const int BassDeviceNotFound = -2;
+
+    private static int ResolveBassOutputDevice(string? deviceName)
     {
-        if (_disposed) return;
-        if (!ReferenceEquals(sender, _waveOut)) return;
-        _speakerReady = false;
-        if (e.Exception == null)
+        var requested = NormalizeAudioDeviceName(deviceName);
+        var defaultIndex = -1;
+        for (var i = 1; i < ManagedBass.Bass.DeviceCount; i++)
         {
-            VoiceDiagnostics.Log("bcl.speaker", "ready=false reason=playback-stopped-clean");
+            if (!ManagedBass.Bass.GetDeviceInfo(i, out var info) || !info.IsEnabled)
+                continue;
+            if (info.IsDefault)
+                defaultIndex = i;
+            if (!string.IsNullOrWhiteSpace(requested) &&
+                DeviceNamesMatch(requested, NormalizeAudioDeviceName(info.Name)))
+                return i;
+        }
+        if (!string.IsNullOrWhiteSpace(requested))
+            return BassDeviceNotFound;
+        return defaultIndex >= 0 ? defaultIndex : -1;
+    }
+
+    private static int ResolveBassRecordDevice(string? deviceName)
+    {
+        var requested = NormalizeAudioDeviceName(deviceName);
+        var defaultIndex = -1;
+        for (var i = 0; i < ManagedBass.Bass.RecordingDeviceCount; i++)
+        {
+            if (!ManagedBass.Bass.RecordGetDeviceInfo(i, out var info) || !info.IsEnabled)
+                continue;
+            if (info.IsDefault)
+                defaultIndex = i;
+            if (!string.IsNullOrWhiteSpace(requested) &&
+                DeviceNamesMatch(requested, NormalizeAudioDeviceName(info.Name)))
+                return i;
+        }
+        return defaultIndex >= 0 ? defaultIndex : 0;
+    }
+
+    private static string DescribeBassRecordDevices()
+    {
+        try
+        {
+            var names = new System.Collections.Generic.List<string>();
+            for (var i = 0; i < ManagedBass.Bass.RecordingDeviceCount; i++)
+                if (ManagedBass.Bass.RecordGetDeviceInfo(i, out var info))
+                    names.Add($"{i}:{info.Name}");
+            return names.Count == 0 ? "none" : string.Join("|", names);
+        }
+        catch (Exception ex)
+        {
+            return $"error:{ex.Message}";
+        }
+    }
+
+    private void SetSpeakerBass(string deviceName)
+    {
+        BassRuntime.EnsureConfigured();
+
+        var device = ResolveBassOutputDevice(deviceName);
+        if (device == BassDeviceNotFound)
+        {
+            _bassOut?.Dispose();
+            _bassOut = null;
+            _speakerReady = false;
+            _openedSpeakerDeviceNumber = int.MinValue;
+            _openedSpeakerProductName = string.Empty;
+            VoiceDiagnostics.Log("bcl.speaker", $"ready=false device=\"{deviceName}\" reason=device-miss backend=bass");
             return;
         }
-        VoiceDiagnostics.Log("bcl.speaker", $"ready=false reason=playback-stopped error=\"{e.Exception.Message}\"");
-        var now = DateTime.UtcNow;
-        if (now - _lastPlaybackStoppedRestartUtc < PlaybackStoppedRestartInterval) return;
-        _lastPlaybackStoppedRestartUtc = now;
-        _mainThreadActions.Enqueue(() =>
-        {
-            if (_disposed) return;
-            SetSpeaker(_lastSpeakerDeviceName);
-            // The rings kept filling while playback was stalled; drop that backlog or it replays late.
-            foreach (var peer in SnapshotPeers())
-                peer.FadeClearRoutes();
-        });
+
+        _bassOut?.Dispose();
+        var mixer = _voiceMixer ?? new BclVoiceMixer();
+        _voiceMixer = mixer;
+        var output = new BassStereoOutput(mixer.Read);
+        _bassOut = output;
+        _farEndReference.Reset();
+        lock (_peerSync)
+            foreach (var peer in _peersBySocket.Values)
+                peer.SetMixer(mixer);
+        _speakerReady = output.Start(device) && output.IsPlaying;
+        _openedSpeakerDeviceNumber = device;
+        _openedSpeakerProductName = ManagedBass.Bass.GetDeviceInfo(device, out var di) ? di.Name : string.Empty;
+        VoiceDiagnostics.Log("bcl.speaker", $"ready={_speakerReady} device=\"{deviceName}\" bassDevice={device} backend=bass-mixer");
     }
 
     private void MaybeFollowDefaultSpeaker()
@@ -1073,7 +989,7 @@ internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
         _speakerTopologyLastPollUtc = now;
 
         string signature;
-        try { signature = DescribeWaveOutDevices(); }
+        try { signature = BassRuntime.DescribeOutputDevices(); }
         catch { return; }
 
         if (signature == _speakerTopologySignature)
@@ -1104,9 +1020,9 @@ internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
         bool pinned = !string.IsNullOrWhiteSpace(_lastSpeakerDeviceName);
         if (pinned && _speakerReady)
         {
-            var resolved = ResolveWaveOutDevice(_lastSpeakerDeviceName);
+            var resolved = ResolveBassOutputDevice(_lastSpeakerDeviceName);
             if (resolved == _openedSpeakerDeviceNumber
-                && string.Equals(DescribeWaveOutDevice(resolved), _openedSpeakerProductName, StringComparison.Ordinal))
+                && string.Equals(BassRuntime.DescribeOutputDevice(resolved), _openedSpeakerProductName, StringComparison.Ordinal))
             {
                 _speakerTopologySignature = signature;
                 return;
@@ -1128,7 +1044,8 @@ internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
             VoiceDiagnostics.Log("bcl.speaker.profile-conflict", "resolved=true");
         }
         VoiceDiagnostics.Log("bcl.speaker", $"ready={_speakerReady} reason={(pinned ? "pinned-follow" : "default-follow")} oldDevices=\"{_speakerTopologySignature}\" newDevices=\"{signature}\"");
-        SetSpeaker(_lastSpeakerDeviceName); // re-resolves against the new device list; refreshes signature
+        SetSpeaker(_lastSpeakerDeviceName);
+        _speakerTopologySignature = signature;
     }
 
     private void MaybeReleaseBluetoothMutedMicrophone()
@@ -1280,6 +1197,7 @@ internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
         var localPlayer = snapshot.TryGetLocalPlayer(out var local) ? local : (VoicePlayerSnapshot?)null;
         var listenerPos = localPlayer?.Position;
 
+
         long proxTicks = VoiceFrameProfiler.Begin();
         SnapshotPeersInto(_updatePeerScratch);
         _routeClientScratch.Clear();
@@ -1394,9 +1312,9 @@ internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
         _disposed = true;
 #if WINDOWS
         StopMicrophoneWorkerForDispose();
-        try { _waveOut?.Stop(); } catch { }
-        try { _waveOut?.Dispose(); } catch { }
-        _waveOut = null;
+        try { _bassOut?.Dispose(); } catch { }
+        _bassOut = null;
+        _voiceMixer = null;
 #elif ANDROID
         StopAndroidMicrophone("dispose");
         try { _androidSpeaker?.Dispose(); } catch { }
@@ -1404,6 +1322,7 @@ internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
 #endif
         lock (_captureFrameSync)
             _micPreprocessor.Dispose();
+        try { _encoder.Dispose(); } catch { }
         var socket = _socket;
         _socket = null;
         if (socket != null)
@@ -1433,8 +1352,8 @@ internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
         };
         _socket.OnDisconnected += (_, _) => _mainThreadActions.Enqueue(() =>
         {
-            ClearPeers();
             ResetJoinState();
+            VoiceDiagnostics.Log("bcl.socket", "connected=False peersKept=true");
         });
         // Socket.IO handlers run async-void on a background socket thread; ctx.GetValue<T> throws on a
         // malformed/hostile server payload. Without a guard that escapes as an unhandled exception and
@@ -1982,12 +1901,11 @@ internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
             if (_peersBySocket.TryGetValue(socketId, out var existing)) { CloseRented(pc); return existing; }
             var clientId = _socketToClient.TryGetValue(socketId, out var mappedClientId) ? mappedClientId : -1;
             var playbackGroupId = clientId >= 0 ? clientId : _nextProvisionalPeerGroupId--;
-            var leftRoute = _leftPlayback.Generate(playbackGroupId);
-            var rightRoute = _rightPlayback.Generate(playbackGroupId);
-            var peer = new PeerConnection(socketId, clientId, playbackGroupId, leftRoute, rightRoute);
-            peer.SetInterleaveSync(_playbackProvider.InterleaveSync);
+            var peer = new PeerConnection(socketId, clientId, playbackGroupId);
             WireNewPeerConnection(peer, socketId, pc);
             _peersBySocket[socketId] = peer;
+            if (_voiceMixer != null)
+                peer.SetMixer(_voiceMixer);
             VoiceDiagnostics.Log("bcl.peer.created", $"socket={socketId} client={clientId} playbackGroup={playbackGroupId} provisional={(clientId < 0).ToString().ToLowerInvariant()}");
             VoiceDiagnostics.Log("bcl.peer-connected", $"socket={socketId} client={clientId}");
             return peer;
@@ -2910,73 +2828,40 @@ internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
     // can't tell "mic broke, want it back" from "unplugged on purpose, done talking", and re-opening could
     // grab a device the user didn't choose. If they want it back, unmuting or changing the device setting
     // re-queues capture through the existing QueueMicrophoneTransition paths.
-    private void OnMicrophoneStopped(object? sender, NAudio.Wave.StoppedEventArgs e)
-    {
-        if (e?.Exception == null) return;
-        VoiceDiagnostics.Log("bcl.mic.stopped", $"reason=device-fault error=\"{e.Exception.Message}\" device=\"{_lastMicDeviceName}\"");
-        _microphoneReady = false;
-    }
-
-    private void OnMicrophoneData(object? sender, WaveInEventArgs e)
+    private void ProcessBassMicFrame(float[] pcm, int samples)
     {
         if (_disposed) return;
         Interlocked.Increment(ref _micCallbacks);
-        var buffer = e.Buffer;
-        if (buffer == null) return;
-        var recordedBytes = Math.Min(e.BytesRecorded, buffer.Length);
-        Interlocked.Add(ref _micBytes, recordedBytes);
+        Interlocked.Add(ref _micBytes, samples * 4);
         if (Mute)
         {
             Interlocked.Increment(ref _micMutedDrops);
             return;
         }
-        if (recordedBytes <= 1) return;
+        if (samples <= 0) return;
 
-        // Serialize the whole capture path (buffer conversion writes the shared _micConvertScratch, which is
-        // reallocated lock-free) under _captureFrameSync so overlapping callbacks during a fast device switch
-        // can't tear it. Snapshot the epoch first and drop the frame if a teardown happened in between. Never
-        // let an exception escape onto NAudio's callback thread — that would crash the process.
         var epoch = Volatile.Read(ref _captureEpoch);
         lock (_captureFrameSync)
         {
             if (epoch != _captureEpoch) return;
             try
             {
-                var format = (sender as IWaveIn)?.WaveFormat ?? _waveIn?.WaveFormat;
-                if (format == null) return;
-                var samples = ConvertMicrophoneBufferToMonoFloat(buffer, recordedBytes, format, out var floatPcm);
-                if (samples <= 0) return;
+                var gain = _micVolume;
+                if (gain != 1f)
+                    for (var i = 0; i < samples; i++)
+                        pcm[i] *= gain;
                 Interlocked.Add(ref _micSamples, samples);
-                ProcessMicrophoneCaptureSamples(floatPcm, samples);
+                ProcessMicrophoneCaptureSamples(pcm, samples);
             }
             catch (Exception ex)
             {
                 Interlocked.Increment(ref _micEncodeFailures);
-                VoiceDiagnostics.Log("bcl.mic.capture_error", $"source=callback error=\"{ex.Message}\"");
+                VoiceDiagnostics.Log("bcl.mic.capture_error", $"source=bass error=\"{ex.Message}\"");
             }
         }
     }
 #endif
 
-    private int ConvertMicrophoneBufferToMonoFloat(byte[] buffer, int recordedBytes, WaveFormat format, out float[] floatPcm)
-    {
-        if (format is WaveFormatExtensible extensible)
-            format = extensible.ToStandardWaveFormat();
-        var channels = Math.Max(1, format.Channels);
-        if (format.Encoding == WaveFormatEncoding.IeeeFloat && format.BitsPerSample == 32)
-            return ConvertIeeeFloat32ToMonoFloat(buffer, recordedBytes, channels, out floatPcm);
-        if (format.Encoding == WaveFormatEncoding.Pcm && format.BitsPerSample == 16)
-            return ConvertPcm16ToMonoFloat(buffer, recordedBytes, channels, out floatPcm);
-        if (format.Encoding == WaveFormatEncoding.Pcm && format.BitsPerSample == 24)
-            return ConvertPcm24ToMonoFloat(buffer, recordedBytes, channels, out floatPcm);
-        if (format.Encoding == WaveFormatEncoding.Pcm && format.BitsPerSample == 32)
-            return ConvertPcm32ToMonoFloat(buffer, recordedBytes, channels, out floatPcm);
-
-        floatPcm = Array.Empty<float>();
-        Interlocked.Increment(ref _micEncodeFailures);
-        VoiceDiagnostics.Log("bcl.mic.capture_error", $"format=\"{DescribeWaveFormat(format)}\" bytes={recordedBytes} error=\"unsupported-capture-format\"");
-        return 0;
-    }
 
     private int ConvertIeeeFloat32ToMonoFloat(byte[] buffer, int recordedBytes, int channels, out float[] floatPcm)
     {
@@ -3478,8 +3363,6 @@ internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
             RemoveSignalRejectLogEntriesLocked(socketId);
         }
         if (peer == null) return;
-        _leftPlayback.Remove(peer.PlaybackGroupId);
-        _rightPlayback.Remove(peer.PlaybackGroupId);
         peer.Dispose();
         VoiceDiagnostics.Log("bcl.peer-disconnected", $"socket={socketId} client={peer.ClientId}");
     }
@@ -3498,8 +3381,6 @@ internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
         }
         foreach (var peer in peers)
         {
-            _leftPlayback.Remove(peer.PlaybackGroupId);
-            _rightPlayback.Remove(peer.PlaybackGroupId);
             peer.Dispose();
             VoiceDiagnostics.Log("bcl.peer-disconnected", $"socket={peer.SocketId} client={peer.ClientId}");
         }
@@ -3592,7 +3473,8 @@ internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
             $"micCallbacks={Volatile.Read(ref _micCallbacks)} micBytes={Volatile.Read(ref _micBytes)} micSamples={Volatile.Read(ref _micSamples)} micWindowSamples={micWindowSamples} micPeak={micPeak:0.000000} micRms={micRms:0.000000} micCrest={micCrest:0.00} micNonZeroSamples={micNonZeroSamples} micSilentCallbacks={micSilentCallbacks} micNearClipSamples={micNearClipSamples} micClipPct={micClipPct:0.000} micZeroCrossRate={micZeroCrossRate:0.0000} " +
             $"micMutedDrops={Volatile.Read(ref _micMutedDrops)} micEncodeFailures={Volatile.Read(ref _micEncodeFailures)} micEncodedFrames={Volatile.Read(ref _micEncodedFrames)} micNoOpenChannelDrops={Volatile.Read(ref _micNoOpenChannelDrops)} audioDecodeFailures={Volatile.Read(ref _audioDecodeFailures)} " +
             $"noiseGate={noiseGateThreshold:0.000000} vadThreshold={vadThreshold:0.000000} gateReason={_lastGateReason} gatePeak={_lastGatePeak:0.000000} gateRms={_lastGateRms:0.000000} gateThreshold={_lastGateThreshold:0.000000} txGain={_lastTransmitGain:0.000} txPeak={_lastTransmitPeak:0.000000} txPeakMax={txPeakMax:0.000000} txRms={txRms:0.000000} txSamples={txSamples} opusBytesAvg={opusAvgBytes:0.0} opusBytesMin={opusMinBytes} opusBytesMax={opusMaxBytes} " +
-            $"syntheticTone={_captureOptions.SyntheticMicToneEnabled} noiseSuppression={_captureOptions.NoiseSuppressionEnabled} {rnnoiseSummary} syntheticFrames={Volatile.Read(ref _syntheticFrames)} capture={DescribeCaptureMode()} calibration={_captureOptions.MicCalibrationDiagnostics} sensitivity={_captureOptions.MicSensitivity:0.00} micReady={_microphoneReady} speakerReady={_speakerReady} plp={_adaptedPacketLossPercent} bitrate={_adaptedBitrate} micOpened={Volatile.Read(ref _lastOpenedWaveInDevice)} micDeadInput={Volatile.Read(ref _deadInputDetected)}");
+            $"syntheticTone={_captureOptions.SyntheticMicToneEnabled} noiseSuppression={_captureOptions.NoiseSuppressionEnabled} {rnnoiseSummary} syntheticFrames={Volatile.Read(ref _syntheticFrames)} capture={DescribeCaptureMode()} calibration={_captureOptions.MicCalibrationDiagnostics} sensitivity={_captureOptions.MicSensitivity:0.00} micReady={_microphoneReady} speakerReady={_speakerReady} plp={_adaptedPacketLossPercent} bitrate={_adaptedBitrate} recordDevice={Volatile.Read(ref _lastOpenedRecordDevice)} micDeadInput={Volatile.Read(ref _deadInputDetected)}");
+        VoiceDiagnostics.Log("bcl.playout", _voiceMixer?.FormatPlayoutDiagnostics() ?? "no-mixer");
         if ((_captureOptions.NoiseSuppressionEnabled || rnnoise.Attempts > 0 || rnnoise.UnavailableFrames > 0)
             && now - _lastRnNoiseStatsLogUtc >= RnNoiseStatsLogInterval)
         {
@@ -3610,7 +3492,7 @@ internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
 #if ANDROID
         return "android-unity-microphone";
 #else
-        return "wavein-only";
+        return "bass";
 #endif
     }
 
@@ -3658,21 +3540,16 @@ internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
         VoiceDiagnostics.Log("bcl.codec.adapt", $"plp={targetPlp} bitrate={targetBitrate} maxLossPermille={maxLossPermille}");
     }
 
-    private static OpusEncoder CreateEncoder()
-    {
-#pragma warning disable CS0618
-        var encoder = new OpusEncoder(AudioHelpers.ClockRate, AudioHelpers.Channels, OpusApplication.OPUS_APPLICATION_VOIP);
-#pragma warning restore CS0618
-        encoder.Bitrate = BclOpusBitrate;
-        encoder.Complexity = AudioHelpers.OpusComplexity;
-        encoder.SignalType = OpusSignal.OPUS_SIGNAL_VOICE;
-        encoder.UseVBR = true;
-        encoder.UseConstrainedVBR = BclOpusUseConstrainedVbr;
-        encoder.UseDTX = true; // shrinks any quiet frames that pass the ShouldTransmit gate
-        encoder.UseInbandFEC = BclOpusUseInbandFec;
-        encoder.PacketLossPercent = BclOpusPacketLossPercent;
-        return encoder;
-    }
+    private static IVoiceEncoder CreateEncoder()
+        => VoiceCodec.CreateEncoder(
+            bitrate: BclOpusBitrate,
+            complexity: AudioHelpers.OpusComplexity,
+            voiceSignal: true,
+            vbr: true,
+            constrainedVbr: BclOpusUseConstrainedVbr,
+            dtx: false,
+            fec: BclOpusUseInbandFec,
+            packetLossPercent: BclOpusPacketLossPercent);
 
     private static void ApplySavedVolume(PeerConnection peer)
     {
@@ -3721,8 +3598,8 @@ internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
     private sealed class PeerConnection : IDisposable
     {
         private readonly object _sync = new();
-        private readonly BclPeerPlaybackRoute _leftRoute;
-        private readonly BclPeerPlaybackRoute _rightRoute;
+        private BclVoiceMixer? _mixer;
+        public void SetMixer(BclVoiceMixer? mixer) => _mixer = mixer;
         private readonly BclVoiceJitterBuffer _jitterBuffer = new(targetDelayFrames: BclJitterTargetDelayFrames, maxBufferedFrames: BclJitterMaxBufferedFrames, minTargetDelayFrames: BclJitterMinTargetFrames, maxTargetDelayFrames: BclJitterMaxTargetFrames);
         private VoiceProximityResult _currentRoute = VoiceProximityResult.Muted(VoiceProximityReason.Unmapped);
         private float _levelPeakSinceStats;
@@ -3757,58 +3634,21 @@ internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
         private static readonly TimeSpan RouteDivergenceLogInterval = TimeSpan.FromSeconds(2);
         private DateTime _lastRouteDivergenceLogUtc = DateTime.MinValue;
         private float[] _decodeFloat = System.Array.Empty<float>();
-        // Latest Opus-PLC concealment frame, synthesized on the DECODE thread (under _sync) after each real
-        // decode and published atomically. The ring's trailing-stall bridge (Fix 2b-3) reads it on the NAudio
-        // pull thread via Volatile.Read — never calling the decoder off-thread (which would corrupt decoder
-        // state) and never taking _sync from the read path (which would invert the _stateLock<->_sync order
-        // and deadlock). Published from a per-peer 3-slot ring (P0.1, see _bridgeSlots): the newly faded frame
-        // goes into the next slot, so a reader still copying a previously-published slot is never overwritten
-        // mid-read even across two back-to-back publishes with two independent readers.
-        private float[]? _latestPlcFrame;
-        // Per-peer 3-SLOT RING for the published bridge frame (P0.1): three reusable float[960] + an advancing
-        // index, replacing the per-frame `new float[960]`. The faded frame is written into the NEXT slot
-        // (index advances modulo 3), then the reference is published via Volatile.Write. THREE slots (readers+1,
-        // not 2) are required because a single jitter-buffer batch drain emits SEVERAL PublishBridgeFrameLocked
-        // calls back-to-back: with two readers (the left + right route, both wired to GetFreshBridgeFrame) a
-        // 2-slot toggle could land the second of two back-to-back publishes onto the very slot a reader
-        // snapshotted, tearing its in-flight copy. readers+1 slots make the slot a reader snapshotted provably
-        // never the next-written slot even across two consecutive publishes — a HARD guarantee.
-        // Allocated lazily on the first publish (decode thread, under _sync) and reused thereafter; pure allocation
-        // hygiene (flattens decode-path garbage as talker count grows) — NOT a freeze fix (GC was not the cause).
-        private const int BridgeSlotCount = 3; // readers (left+right) + 1
-        private float[][]? _bridgeSlots;
-        private int _bridgeSlot;
-        // Monotonic publish timestamp (Stopwatch ticks) for _latestPlcFrame. The provider lambda self-expires
-        // the bridge frame: a frame older than the ring's idle-reset window (200 ms) is never returned, so a
-        // bridge can never replay a faded copy of a PREVIOUS utterance's tail after an idle gap or a
-        // data-channel reopen. Written under _sync alongside the frame; read cross-thread via Volatile.Read
-        // (long reads are atomic on x64).
-        private long _latestPlcFrameTicks;
-        // 200 ms, matching AudioProviders' IdleRecoveryResetWindow. Expressed in Stopwatch ticks once.
-        private static readonly long PlcFrameMaxAgeTicks = System.Diagnostics.Stopwatch.Frequency / 5;
         private bool _disposed;
 
         // Retained: constructed by the test harness via reflection. Forwards clientId as the group id.
-        public PeerConnection(string socketId, int clientId, BclPeerPlaybackRoute leftRoute, BclPeerPlaybackRoute rightRoute)
-            : this(socketId, clientId, clientId, leftRoute, rightRoute)
+        public PeerConnection(string socketId, int clientId)
+            : this(socketId, clientId, clientId)
         {
         }
 
-        public PeerConnection(string socketId, int clientId, int playbackGroupId, BclPeerPlaybackRoute leftRoute, BclPeerPlaybackRoute rightRoute)
+        public PeerConnection(string socketId, int clientId, int playbackGroupId)
         {
             SocketId = socketId;
             ClientId = clientId;
             PlaybackGroupId = playbackGroupId;
-            _leftRoute = leftRoute;
-            _rightRoute = rightRoute;
-            // Per-peer adaptive jitter wiring (Fix 2a-3 / 2b-3). The clean arrival-jitter signal is read off
-            // _jitterBuffer; the PLC bridge frame is the atomically-published _latestPlcFrame. Both callbacks
-            // are invoked under the ring's own _stateLock and touch only thread-safe state.
-            _leftRoute.SetJitterSamplesProvider(() => _jitterBuffer.CurrentJitterSamples);
-            _rightRoute.SetJitterSamplesProvider(() => _jitterBuffer.CurrentJitterSamples);
-            _leftRoute.SetPlcFrameProvider(GetFreshBridgeFrame);
-            _rightRoute.SetPlcFrameProvider(GetFreshBridgeFrame);
             _tailFlushTimer = new Timer(static state => ((PeerConnection)state!).FlushBufferedVoiceFromTimer(), this, Timeout.InfiniteTimeSpan, Timeout.InfiniteTimeSpan);
+            _jitterBuffer.DredCapable = Decoder.SupportsDred;
             MuteAll();
         }
 
@@ -3817,8 +3657,6 @@ internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
 
         public void FadeClearRoutes()
         {
-            _leftRoute.FadeClearBufferedSamples();
-            _rightRoute.FadeClearBufferedSamples();
         }
 
         private const int MinPacketsForLossReport = 25;
@@ -3897,7 +3735,7 @@ internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
         // Reset to MinValue the instant the channel is observed open. Touched only on the main-thread poll.
         public DateTime ChannelDeficitSinceUtc { get; set; } = DateTime.MinValue;
 #pragma warning disable CS0618
-        public OpusDecoder Decoder { get; } = new(AudioHelpers.ClockRate, AudioHelpers.Channels);
+        public IVoiceDecoder Decoder { get; } = VoiceCodec.CreateDecoder();
 #pragma warning restore CS0618
         public byte PlayerId { get; private set; } = byte.MaxValue;
         public string PlayerName { get; private set; } = "Unknown";
@@ -3947,9 +3785,9 @@ internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
         {
             get
             {
-                var level = Math.Max(_leftRoute.Level, _rightRoute.Level);
+                var level = 0f;
                 if (_lastVoiceLevelUtc != DateTime.MinValue && DateTime.UtcNow - _lastVoiceLevelUtc <= RemoteActivityHold)
-                    level = Math.Max(level, _recentVoiceLevel);
+                    level = _recentVoiceLevel;
                 return level;
             }
         }
@@ -3989,14 +3827,13 @@ internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
         public void SetVolume(float volume)
         {
             var clamped = Math.Clamp(volume, 0f, 2f);
-            _leftRoute.SetVolume(clamped);
-            _rightRoute.SetVolume(clamped);
+            _mixer?.SetClientVolume(PlaybackGroupId, clamped);
         }
         public void MuteAll()
         {
-            _leftRoute.MuteAll();
-            _rightRoute.MuteAll();
+            _mixer?.SetPeer(PlaybackGroupId, 0f, _appliedPan, VoiceAudioFilterMode.None);
         }
+
         public void Apply(VoiceProximityResult result)
         {
             if (VoiceDiagnostics.IsEnabled && IsSpeaking
@@ -4011,26 +3848,12 @@ internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
                         $"client={ClientId} player={PlayerId} reason={result.Reason} pan={result.Pan:0.000} normal={result.NormalVolume:0.000} appliedReason={_currentRoute.Reason} appliedPan={_appliedPan:0.000} appliedNormal={_currentRoute.NormalVolume:0.000}");
                 }
             }
-            var wasAudible = _currentRoute.Audible;
             _currentRoute = result;
             WallCoefficient = result.WallCoefficient;
             _appliedPan = result.Pan;
-            // Edge-only fade-clear; clearing on BECOMING audible chops speech onsets and re-arms a >=60ms prebuffer.
-            var bufferedSamples = wasAudible && !result.Audible ? Math.Max(_leftRoute.BufferedSamples, _rightRoute.BufferedSamples) : 0;
-            if (bufferedSamples > 0)
-            {
-                _leftRoute.FadeClearBufferedSamples();
-                _rightRoute.FadeClearBufferedSamples();
-                _routeClearsSinceStats++;
-                // Gate the interpolated diagnostic string: it fires in bursts on audible<->inaudible
-                // transitions, so building it eagerly (even with diagnostics off) is needless alloc churn.
-                if (VoiceDiagnostics.IsEnabled)
-                    VoiceDiagnostics.Log("bcl.route.clear",
-                        $"client={ClientId} reason={result.Reason} wasAudible={wasAudible} audible={result.Audible} bufferedSamples={bufferedSamples} normal={result.NormalVolume:0.000} ghost={result.GhostVolume:0.000} radio={result.RadioVolume:0.000} pan={result.Pan:0.000} appliedPan={_appliedPan:0.000}");
-            }
-            BclStereoPlaybackProvider.GetPanGains(_appliedPan, out var leftGain, out var rightGain);
-            _leftRoute.Apply(result, leftGain);
-            _rightRoute.Apply(result, rightGain);
+
+            var routeVolume = Math.Clamp(result.NormalVolume + result.GhostVolume + result.RadioVolume, 0f, 1f);
+            _mixer?.SetPeer(PlaybackGroupId, routeVolume, result.Pan, result.FilterMode);
         }
         public void SampleDiagnostics()
         {
@@ -4071,28 +3894,14 @@ internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
         // interleave lock to re-lock playout. Runs in production, not just when diagnostics are enabled.
         private void RealignRoutes()
         {
-            int leftBuffered, rightBuffered, delta;
-            lock (_lrSync)
-            {
-                leftBuffered = _leftRoute.BufferedSamples;
-                rightBuffered = _rightRoute.BufferedSamples;
-                delta = leftBuffered - rightBuffered;
-                if (Math.Abs(delta) < AudioHelpers.FrameSize) return;
-                if (delta > 0) _leftRoute.DiscardBufferedSamples(delta);
-                else _rightRoute.DiscardBufferedSamples(-delta);
-            }
-            if (VoiceDiagnostics.IsEnabled && DateTime.UtcNow - _lastLrDivergenceLogUtc >= LrDivergenceLogInterval)
-            {
-                _lastLrDivergenceLogUtc = DateTime.UtcNow;
-                VoiceDiagnostics.Log("bcl.lr.divergence",
-                    $"client={ClientId} left={leftBuffered} right={rightBuffered} realigned={Math.Abs(delta)}");
-            }
+            _ = _lastLrDivergenceLogUtc;
+            _ = LrDivergenceLogInterval;
         }
         public PeerDiagnostics ConsumeDiagnostics()
         {
             lock (_sync)
             {
-                var bufferStats = $"left={_leftRoute.ConsumeDebugStats()} right={_rightRoute.ConsumeDebugStats()}";
+                var bufferStats = "bass";
                 var result = new PeerDiagnostics(ClientId, _levelPeakSinceStats, _packetLevelPeakSinceStats, _samplesSinceStats, _audibleSamplesSinceStats, _audibleSilentSamplesSinceStats, _routeClearsSinceStats, _currentRoute, _appliedPan, _jitterBuffer.ConsumeStats(), bufferStats);
                 _levelPeakSinceStats = 0f;
                 _packetLevelPeakSinceStats = 0f;
@@ -4153,16 +3962,17 @@ internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
                 foreach (var frame in frames)
                 {
                     var payload = frame.Packet?.Payload ?? Array.Empty<byte>();
+                    var isDred = frame.Kind == BclVoicePlayoutKind.Dred;
                     var decodeFec = frame.Kind == BclVoicePlayoutKind.Fec;
-                    // FEC-reconstructed frame: decode at standard size; frame.Duration here is the
-                    // successor's, not the lost frame's.
-                    var frameSize = decodeFec
+                    // FEC/DRED reconstruct one lost frame at the standard size; a real Audio frame uses its own
+                    // duration. For FEC/DRED, frame.Packet is the successor/recovering packet, not the lost one.
+                    var frameSize = (decodeFec || isDred)
                         ? AudioHelpers.FrameSize
                         : NormalizeOpusFrameSize(Math.Max(AudioHelpers.FrameSize, (int)frame.Duration));
                     // A single bad frame must NOT abandon the rest of the drained batch (up to
                     // MaxDrainFramesPerPacket frames). DecodeAndAddSamples conceals the failed slot with
                     // silence, so surface the first error for telemetry and keep draining the successors.
-                    if (DecodeAndAddSamples(payload, false, decodeFec, frameSize, out var frameError, out var decoded))
+                    if (DecodeAndAddSamples(payload, false, decodeFec, frameSize, out var frameError, out var decoded, isDred ? frame.DredOffset : -1))
                         decodedFrames += decoded > 0 ? 1 : 0;
                     else if (string.IsNullOrEmpty(error))
                         error = frameError;
@@ -4189,14 +3999,15 @@ internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
                         continue;
                     }
                     var payload = frame.Packet?.Payload ?? Array.Empty<byte>();
+                    var isDred = frame.Kind == BclVoicePlayoutKind.Dred;
                     var decodeFec = frame.Kind == BclVoicePlayoutKind.Fec;
-                    // FEC-reconstructed frame: decode at standard size; frame.Duration here is the
-                    // successor's, not the lost frame's.
-                    var frameSize = decodeFec
+                    // FEC/DRED reconstruct one lost frame at the standard size; a real Audio frame uses its own
+                    // duration. For FEC/DRED, frame.Packet is the successor/recovering packet, not the lost one.
+                    var frameSize = (decodeFec || isDred)
                         ? AudioHelpers.FrameSize
                         : NormalizeOpusFrameSize(Math.Max(AudioHelpers.FrameSize, (int)frame.Duration));
                     // Conceal a failed slot and keep draining instead of abandoning the rest of the tail batch.
-                    if (DecodeAndAddSamples(payload, false, decodeFec, frameSize, out var frameError, out var decoded))
+                    if (DecodeAndAddSamples(payload, false, decodeFec, frameSize, out var frameError, out var decoded, isDred ? frame.DredOffset : -1))
                         decodedFrames += decoded > 0 ? 1 : 0;
                     else if (string.IsNullOrEmpty(error))
                         error = frameError;
@@ -4340,7 +4151,7 @@ internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
             _decodeSuppressed = false;
         }
 
-        private bool DecodeAndAddSamples(byte[] data, bool isLegacy, bool decodeFec, int frameSize, out string? error, out int decodedFrames)
+        private bool DecodeAndAddSamples(byte[] data, bool isLegacy, bool decodeFec, int frameSize, out string? error, out int decodedFrames, int dredOffsetSamples = -1)
         {
             error = null;
             decodedFrames = 0;
@@ -4349,7 +4160,7 @@ internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
             if (TryHandleSuppressedDecode(frameSize))
                 return false;
 
-            if (IsOpusDtxSilencePacket(data))
+            if (dredOffsetSamples < 0 && IsOpusDtxSilencePacket(data))
             {
                 RouteSilence(frameSize);
                 NoteDecodeSuccess();
@@ -4358,7 +4169,7 @@ internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
 
             // PLC (empty payload) and FEC require frame_size to equal the EXACT missing duration; a real
             // packet is decoded at full capacity so its true (possibly larger) frame size always fits.
-            var conceal = data.Length == 0 || decodeFec;
+            var conceal = data.Length == 0 || decodeFec || dredOffsetSamples >= 0;
 
             // P2.1: pre-guard the per-packet Concentus decode THROW. On an incompatible/foreign stream sharing the
             // room, Concentus throws+catches per packet on the receive thread, stealing time from healthy streams.
@@ -4382,7 +4193,9 @@ internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
             int decoded;
             try
             {
-                decoded = Decoder.Decode(data.AsSpan(0, data.Length), pcm.AsSpan(0, capacity), decodeFrameSize, decodeFec);
+                decoded = dredOffsetSamples >= 0
+                    ? Decoder.DecodeDred(data, dredOffsetSamples, pcm.AsSpan(0, capacity), frameSize)
+                    : Decoder.Decode(data.AsSpan(0, data.Length), pcm.AsSpan(0, capacity), decodeFrameSize, decodeFec);
             }
             catch (Exception ex)
             {
@@ -4422,59 +4235,11 @@ internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
                 if (abs > peak) peak = abs;
             }
             ObserveVoiceLevel(peak);
-            lock (_lrSync)
-            {
-                _leftRoute.AddSamples(samples, 0, decoded);
-                _rightRoute.AddSamples(samples, 0, decoded);
-            }
-            // Publish a bridge concealment frame for the ring's trailing-stall PLC (Fix 2b-3). Only after a
-            // real decode, never on a conceal path. NOTE (deviation from plan, [confirm in code]): the plan
-            // asked for live Opus PLC synthesis from the ring's read thread, but the peer Decoder is shared
-            // with the decode thread (under _sync) and is NOT thread-safe, and calling it off-thread would
-            // also invert the _stateLock<->_sync lock order (deadlock) and corrupt decoder state on every
-            // frame. So the bridge is a fast-faded copy of the just-decoded real audio — energy-matched,
-            // bounded to MaxTrailingPlcFrames (~60 ms), trim-bounded, and published atomically.
-            if (!conceal) PublishBridgeFrameLocked(samples, decoded);
+            _mixer?.AddSamples(PlaybackGroupId, samples, decoded, silent: false);
             decodedFrames = 1;
             return true;
         }
 
-        // Build one ~20 ms concealment frame from the tail of the last real decode (gentle fade-out so a held
-        // bridge doesn't buzz) and publish it atomically for the ring's trailing-stall bridge. Runs on the
-        // decode thread under _sync; the ring reads the published reference via Volatile.Read on the NAudio
-        // thread without touching the decoder or _sync (no off-thread decode, no lock-order inversion).
-        private void PublishBridgeFrameLocked(float[] samples, int decoded)
-        {
-            int n = AudioHelpers.FrameSize * AudioHelpers.Channels;
-            if (decoded < n) return; // need a full frame to bridge from
-            // Publish into a 3-slot ring (P0.1): advance to the next slot, then publish it. Runs on the decode
-            // thread under _sync, but the cadence is per-DRAINED-FRAME, not per-20ms — a single jitter-buffer
-            // batch drain emits several PublishBridgeFrameLocked calls back-to-back. With readers+1 = 3 slots the
-            // next-written slot is never one a reader could currently hold even across two back-to-back publishes,
-            // so a reader's in-flight copy is never torn; readers only read the volatile-published reference.
-            if (_bridgeSlots == null)
-                _bridgeSlots = new[] { new float[n], new float[n], new float[n] };
-            _bridgeSlot = (_bridgeSlot + 1) % BridgeSlotCount; // advance to the next slot in the ring
-            var frame = _bridgeSlots[_bridgeSlot];
-            int start = decoded - n; // take the most recent frame's worth of samples
-            Array.Copy(samples, start, frame, 0, n);
-            // Publish the frame, then its monotonic age stamp. Order doesn't matter for correctness because the
-            // reader only USES a frame whose stamp is fresh; a torn read at worst expires a still-valid frame.
-            System.Threading.Volatile.Write(ref _latestPlcFrame, frame);
-            System.Threading.Volatile.Write(ref _latestPlcFrameTicks, System.Diagnostics.Stopwatch.GetTimestamp());
-        }
-
-        // Provider for the ring's trailing-stall bridge (Fix 2b-3), invoked on the NAudio pull thread under the
-        // ring's own _stateLock. Returns the published bridge frame ONLY while it is fresher than the 200 ms
-        // idle-reset window; an older frame (an idle gap or data-channel reopen happened) returns null so the
-        // bridge can never replay a faded copy of a previous utterance's tail. No decoder call, no _sync.
-        private float[]? GetFreshBridgeFrame()
-        {
-            long stamp = System.Threading.Volatile.Read(ref _latestPlcFrameTicks);
-            if (stamp == 0) return null; // nothing published yet
-            if (System.Diagnostics.Stopwatch.GetTimestamp() - stamp > PlcFrameMaxAgeTicks) return null; // stale
-            return System.Threading.Volatile.Read(ref _latestPlcFrame);
-        }
 
         // Routes one frame of silence to keep the playout timeline aligned when a packet cannot be decoded,
         // so a single bad/edge frame becomes a 20 ms blip instead of a gap that also re-prebuffers the ring.
@@ -4484,11 +4249,7 @@ internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
             if (n <= 0) return;
             if (_decodeFloat.Length < n) _decodeFloat = new float[n];
             Array.Clear(_decodeFloat, 0, n);
-            lock (_lrSync)
-            {
-                _leftRoute.AddSamples(_decodeFloat, 0, n);
-                _rightRoute.AddSamples(_decodeFloat, 0, n);
-            }
+            _mixer?.AddSamples(PlaybackGroupId, _decodeFloat, n, silent: true);
         }
         public void Dispose()
         {
@@ -4500,6 +4261,7 @@ internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
                 try { Connection?.close(); } catch { }
                 try { Decoder.Dispose(); } catch { }
                 try { _tailFlushTimer.Dispose(); } catch { }
+                try { _mixer?.Remove(PlaybackGroupId); } catch { }
             }
         }
     }

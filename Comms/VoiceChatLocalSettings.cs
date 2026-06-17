@@ -2,10 +2,6 @@ using System;
 using System.Collections.Generic;
 using BepInEx.Configuration;
 using UnityEngine;
-#if WINDOWS
-using NAudio.Wave;
-using VoiceChatPlugin.Audio;
-#endif
 
 namespace VoiceChatPlugin.VoiceChat;
 public enum MicDeviceEnum
@@ -440,12 +436,14 @@ public class VoiceChatLocalSettings
         try
         {
 #if WINDOWS
-            int count = WaveInEvent.DeviceCount;
+            BassRuntime.EnsureConfigured();
+            int count = ManagedBass.Bass.RecordingDeviceCount;
             for (int i = 0; i < count; i++)
             {
-                var cap  = WaveInEvent.GetCapabilities(i);
-                string n = cap.ProductName?.Trim() ?? "";
-                if (!string.IsNullOrEmpty(n) && n != "Microsoft Sound Mapper")
+                if (!ManagedBass.Bass.RecordGetDeviceInfo(i, out var info) || !info.IsEnabled)
+                    continue;
+                string n = info.Name?.Trim() ?? "";
+                if (!string.IsNullOrEmpty(n) && !n.Equals("Default", StringComparison.OrdinalIgnoreCase))
                     mics.Add(n);
             }
 #elif ANDROID
@@ -464,13 +462,14 @@ public class VoiceChatLocalSettings
         var spks = new List<string> { "Default" };
         try
         {
-            int count = WinMmOutputDevices.DeviceCount;
-            for (int i = 0; i < count; i++)
+            BassRuntime.EnsureConfigured();
+            int count = ManagedBass.Bass.DeviceCount;
+            for (int i = 1; i < count; i++)
             {
-                string n = WinMmOutputDevices.GetProductName(i).Trim();
-                if (string.Equals(n, "Microsoft Sound Mapper", StringComparison.OrdinalIgnoreCase))
+                if (!ManagedBass.Bass.GetDeviceInfo(i, out var info) || !info.IsEnabled)
                     continue;
-                if (!string.IsNullOrEmpty(n))
+                string n = info.Name?.Trim() ?? "";
+                if (!string.IsNullOrEmpty(n) && !n.Equals("Default", StringComparison.OrdinalIgnoreCase))
                     spks.Add(n);
             }
         }

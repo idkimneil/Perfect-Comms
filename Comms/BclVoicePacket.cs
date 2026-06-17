@@ -19,6 +19,7 @@ internal enum BclVoicePlayoutKind
     Audio,
     Plc,
     Fec,
+    Dred,
 }
 
 internal readonly struct BclVoicePacket
@@ -132,18 +133,21 @@ internal readonly struct BclVoicePacket
 
 internal readonly struct BclVoicePlayoutFrame
 {
-    public BclVoicePlayoutFrame(BclVoicePlayoutKind kind, BclVoicePacket? packet, ushort sequence, ushort duration)
+    public BclVoicePlayoutFrame(BclVoicePlayoutKind kind, BclVoicePacket? packet, ushort sequence, ushort duration, int dredOffset = 0)
     {
         Kind = kind;
         Packet = packet;
         Sequence = sequence;
         Duration = duration;
+        DredOffset = dredOffset;
     }
 
     public BclVoicePlayoutKind Kind { get; }
     public BclVoicePacket? Packet { get; }
     public ushort Sequence { get; }
     public ushort Duration { get; }
+    // For Dred frames: how many samples back from the recovering packet (Packet) this lost frame sits.
+    public int DredOffset { get; }
 }
 
 internal readonly struct BclVoiceJitterWindowStats
@@ -217,6 +221,8 @@ internal sealed class BclVoiceJitterBuffer
     // FEC+PLC run length since the last real Audio frame; caps invented audio at ~100 ms (Fix 2b-2).
     private int _consecutiveConcealed;
     private const int MaxConsecutiveConcealFrames = 5;
+    private const int MaxConsecutiveDredFrames = 20;
+    public bool DredCapable { get; set; }
     private DateTime _lastEnqueueUtc = DateTime.MinValue;
     // True per-peer arrival-jitter estimator (RFC3550-style mean-abs-deviation, in SAMPLE units). Measured
     // here at Enqueue from packet.Sequence + a MONOTONIC receive timestamp (Stopwatch, not UtcNow) so it
@@ -260,6 +266,23 @@ internal sealed class BclVoiceJitterBuffer
         if (_targetDelayFrames >= _maxTargetDelayFrames) return;
         _targetDelayFrames++;
         _packetsSinceGrow = 0;
+    }
+
+    // Proactive, jitter-estimate-driven depth: instead of only reacting to discrete late/reordered frames,
+    // raise the playout target toward what the measured RFC3550 arrival jitter actually needs (one frame-step
+    // per cooldown, toward baseline + JitterGain*jitterStdev + 1 frame margin). A bursty link deepens its buffer
+    // BEFORE it underruns rather than after, which is the difference between a deeper cushion and an audible cut.
+    private void MaybeRaiseTargetForJitter(int frameSamples)
+    {
+        if (frameSamples <= 0 || _targetDelayFrames >= _maxTargetDelayFrames) return;
+        if (_packetsSinceGrow < GrowCooldownPackets) return;
+        double jitter = System.Threading.Volatile.Read(ref _jitterSamples);
+        int jitterFrames = (int)Math.Ceiling(AudioHelpers.JitterGain * jitter / frameSamples);
+        int desired = Math.Clamp(_minTargetDelayFrames + jitterFrames + 1, _minTargetDelayFrames, _maxTargetDelayFrames);
+        if (desired <= _targetDelayFrames) return;
+        _targetDelayFrames++;
+        _packetsSinceGrow = 0;
+        _windowDisturbed = true; // a clean-window shrink must not immediately undo a jitter-driven grow
     }
 
     private void NoteAcceptedPacketForAdaptation()
@@ -347,6 +370,7 @@ internal sealed class BclVoiceJitterBuffer
         _lastArrivalTicks = nowTicks;
         _lastArrivalSeq = packet.Sequence;
         _haveArrival = true;
+        MaybeRaiseTargetForJitter(packet.Duration);
 
         // Manual scan instead of LINQ .Any(): avoids per-packet iterator + closure allocation.
         bool anyBufferedAfter = false;
@@ -430,11 +454,11 @@ internal sealed class BclVoiceJitterBuffer
             }
 
             var nextSequence = FindNextSequence();
-            if (nextSequence == null) return; // trailing stall -> ring layer bridges it (Fix 2b-3)
+            if (nextSequence == null) return; // trailing stall -> mixer prebuffer/reprime conceals it
 
             var next = _packets[nextSequence.Value];
             // Long real gap: snap forward instead of inventing > ~100 ms of fake audio (Fix 2b-2).
-            if (_consecutiveConcealed >= MaxConsecutiveConcealFrames)
+            if (_consecutiveConcealed >= (DredCapable ? MaxConsecutiveDredFrames : MaxConsecutiveConcealFrames))
             {
                 System.Threading.Interlocked.Add(ref _cumulativeLostFrames,
                     Math.Min(Distance(_expectedSequence, nextSequence.Value), SnapLossReportCapFrames));
@@ -455,7 +479,11 @@ internal sealed class BclVoiceJitterBuffer
             else
             {
                 _plcFrames++;
-                frames.Add(new BclVoicePlayoutFrame(BclVoicePlayoutKind.Plc, null, _expectedSequence, next.Duration));
+                // DRED: reconstruct this lost frame from the recovering packet's Deep REDundancy. The decoder
+                // falls back to neural PLC if `next` carries no DRED, so this is always at least as good as PLC.
+                // Offset = frames back from `next` to this lost frame, in samples.
+                int dredOffsetSamples = Distance(_expectedSequence, nextSequence.Value) * next.Duration;
+                frames.Add(new BclVoicePlayoutFrame(BclVoicePlayoutKind.Dred, next, _expectedSequence, next.Duration, dredOffsetSamples));
             }
             _expectedSequence++;
         }

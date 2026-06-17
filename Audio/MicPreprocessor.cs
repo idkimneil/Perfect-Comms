@@ -49,7 +49,7 @@ internal sealed class MicPreprocessor : IDisposable
     private float _hpfLastOutput;
     private bool _disposed;
     private bool _noiseSuppressionEnabled = true;
-    private RnNoiseSuppressor? _noiseSuppressor;
+    private INoiseSuppressor? _noiseSuppressor;
     private SpeexEchoCanceller? _echoCanceller;
     private bool _echoCancellationEnabled = true;
     private bool _echoCancellationUnavailable;
@@ -202,7 +202,8 @@ internal sealed class MicPreprocessor : IDisposable
         Measure(pcm, count, out var inputPeak, out var inputSquareSum);
         if (_noiseSuppressor == null)
         {
-            if (!RnNoiseSuppressor.TryCreate(out var suppressor, out var error))
+#if WINDOWS
+            if (!DeepFilterDenoiser.TryCreate(out var suppressor, out var error))
             {
                 SetNoiseSuppressionState("unavailable", error, null);
                 TrackNoiseSuppressionFrame(false, 0, true, count, inputPeak, inputSquareSum, inputPeak, inputSquareSum, 0f);
@@ -211,6 +212,12 @@ internal sealed class MicPreprocessor : IDisposable
 
             _noiseSuppressor = suppressor;
             SetNoiseSuppressionState("ready", "none", suppressor);
+#else
+            // No native noise suppressor on non-Windows builds (DeepFilterNet ships win-x64 only).
+            SetNoiseSuppressionState("unavailable", "no-native-noise-suppressor", null);
+            TrackNoiseSuppressionFrame(false, 0, true, count, inputPeak, inputSquareSum, inputPeak, inputSquareSum, 0f);
+            return false;
+#endif
         }
 
         var activeSuppressor = _noiseSuppressor;
@@ -445,7 +452,7 @@ internal sealed class MicPreprocessor : IDisposable
         }
     }
 
-    private void SetNoiseSuppressionState(string state, string error, RnNoiseSuppressor? suppressor)
+    private void SetNoiseSuppressionState(string state, string error, INoiseSuppressor? suppressor)
     {
         var safeError = string.IsNullOrWhiteSpace(error) ? "none" : SanitizeLogValue(error);
         var nativePath = suppressor?.NativePath ?? _noiseSuppressionNativePath;
