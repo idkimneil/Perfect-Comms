@@ -185,7 +185,6 @@ internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
 #if ANDROID
     private AndroidMicrophone? _androidMicrophone;
     private AndroidSampleProviderSpeaker? _androidSpeaker;
-    private AndroidVoiceMixer? _androidMixer;
 #endif
     private IVoiceEncoder _encoder = CreateEncoder();
     private Timer? _syntheticMicTimer;
@@ -198,8 +197,8 @@ internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
     private volatile bool _localSpeaking;
     private bool _microphoneReady;
     private bool _speakerReady;
-#if WINDOWS
     private BclVoiceMixer? _voiceMixer;
+#if WINDOWS
     private BassStereoOutput? _bassOut;
 #endif
     private VoiceCaptureRuntimeOptions _captureOptions;
@@ -871,19 +870,19 @@ internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
         try
         {
             _androidSpeaker?.Dispose();
-            _androidMixer = new AndroidVoiceMixer();
-            _androidSpeaker = new AndroidSampleProviderSpeaker(_androidMixer);
+            var mixer = _voiceMixer ?? new BclVoiceMixer();
+            _voiceMixer = mixer;
+            _androidSpeaker = new AndroidSampleProviderSpeaker(mixer);
             _speakerReady = _androidSpeaker.IsPlaying;
             lock (_peerSync)
                 foreach (var peer in _peersBySocket.Values)
-                    peer.SetAndroidMixer(_androidMixer);
+                    peer.SetMixer(mixer);
             VoiceDiagnostics.Log("bcl.speaker", $"ready={_speakerReady} device=\"{deviceName}\" backend=android-managed");
         }
         catch (Exception ex)
         {
             try { _androidSpeaker?.Dispose(); } catch { }
             _androidSpeaker = null;
-            _androidMixer = null;
             _speakerReady = false;
             VoiceDiagnostics.Log("bcl.speaker", $"ready=false device=\"{deviceName}\" error=\"{ex.Message}\"");
         }
@@ -1904,12 +1903,8 @@ internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
             var peer = new PeerConnection(socketId, clientId, playbackGroupId);
             WireNewPeerConnection(peer, socketId, pc);
             _peersBySocket[socketId] = peer;
-#if WINDOWS
             if (_voiceMixer != null)
                 peer.SetMixer(_voiceMixer);
-#elif ANDROID
-            peer.SetAndroidMixer(_androidMixer);
-#endif
             VoiceDiagnostics.Log("bcl.peer.created", $"socket={socketId} client={clientId} playbackGroup={playbackGroupId} provisional={(clientId < 0).ToString().ToLowerInvariant()}");
             VoiceDiagnostics.Log("bcl.peer-connected", $"socket={socketId} client={clientId}");
             return peer;
@@ -3601,14 +3596,8 @@ internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
     private sealed class PeerConnection : IDisposable
     {
         private readonly object _sync = new();
-#if WINDOWS
         private BclVoiceMixer? _mixer;
         public void SetMixer(BclVoiceMixer? mixer) => _mixer = mixer;
-#endif
-#if ANDROID
-        private AndroidVoiceMixer? _androidMixer;
-        public void SetAndroidMixer(AndroidVoiceMixer? mixer) => _androidMixer = mixer;
-#endif
         private readonly BclVoiceJitterBuffer _jitterBuffer = new(targetDelayFrames: BclJitterTargetDelayFrames, maxBufferedFrames: BclJitterMaxBufferedFrames, minTargetDelayFrames: BclJitterMinTargetFrames, maxTargetDelayFrames: BclJitterMaxTargetFrames);
         private VoiceProximityResult _currentRoute = VoiceProximityResult.Muted(VoiceProximityReason.Unmapped);
         private float _levelPeakSinceStats;
@@ -3835,18 +3824,11 @@ internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
         public void SetVolume(float volume)
         {
             var clamped = Math.Clamp(volume, 0f, 2f);
-#if WINDOWS
             _mixer?.SetClientVolume(PlaybackGroupId, clamped);
-#endif
-#if ANDROID
-            _androidMixer?.SetClientVolume(PlaybackGroupId, clamped);
-#endif
         }
         public void MuteAll()
         {
-#if WINDOWS
             _mixer?.SetPeer(PlaybackGroupId, 0f, _appliedPan, VoiceAudioFilterMode.None);
-#endif
         }
 
         public void Apply(VoiceProximityResult result)
@@ -3868,12 +3850,7 @@ internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
             _appliedPan = result.Pan;
 
             var routeVolume = Math.Clamp(result.NormalVolume + result.GhostVolume + result.RadioVolume, 0f, 1f);
-#if WINDOWS
             _mixer?.SetPeer(PlaybackGroupId, routeVolume, result.Pan, result.FilterMode);
-#endif
-#if ANDROID
-            _androidMixer?.SetPeer(PlaybackGroupId, routeVolume, result.Pan);
-#endif
         }
         public void SampleDiagnostics()
         {
@@ -4255,12 +4232,7 @@ internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
                 if (abs > peak) peak = abs;
             }
             ObserveVoiceLevel(peak);
-#if WINDOWS
             _mixer?.AddSamples(PlaybackGroupId, samples, decoded, silent: false);
-#endif
-#if ANDROID
-            _androidMixer?.AddSamples(PlaybackGroupId, samples, decoded);
-#endif
             decodedFrames = 1;
             return true;
         }
@@ -4274,12 +4246,7 @@ internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
             if (n <= 0) return;
             if (_decodeFloat.Length < n) _decodeFloat = new float[n];
             Array.Clear(_decodeFloat, 0, n);
-#if WINDOWS
             _mixer?.AddSamples(PlaybackGroupId, _decodeFloat, n, silent: true);
-#endif
-#if ANDROID
-            _androidMixer?.AddSamples(PlaybackGroupId, _decodeFloat, n);
-#endif
         }
         public void Dispose()
         {
@@ -4291,12 +4258,7 @@ internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
                 try { Connection?.close(); } catch { }
                 try { Decoder.Dispose(); } catch { }
                 try { _tailFlushTimer.Dispose(); } catch { }
-#if WINDOWS
                 try { _mixer?.Remove(PlaybackGroupId); } catch { }
-#endif
-#if ANDROID
-                try { _androidMixer?.Remove(PlaybackGroupId); } catch { }
-#endif
             }
         }
     }

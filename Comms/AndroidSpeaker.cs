@@ -111,13 +111,13 @@ internal sealed class AndroidSampleProviderSpeaker : IDisposable
     private const int Channels = 2;
     private readonly AudioSource _source;
     private readonly AudioClip _clip;
-    private readonly AndroidVoiceMixer _mixer;
+    private readonly BclVoiceMixer _mixer;
     private int _readCallbacks;
 
     public bool IsPlaying => _source != null && _source.isPlaying;
     public int ReadCallbacks => Volatile.Read(ref _readCallbacks);
 
-    public AndroidSampleProviderSpeaker(AndroidVoiceMixer mixer)
+    public AndroidSampleProviderSpeaker(BclVoiceMixer mixer)
     {
         _mixer = mixer ?? throw new ArgumentNullException(nameof(mixer));
 
