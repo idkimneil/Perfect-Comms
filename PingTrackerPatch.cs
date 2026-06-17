@@ -1433,7 +1433,8 @@ public static class PingTrackerPatch
             outfit.HatId,
             outfit.SkinId,
             outfit.VisorId,
-            outfit.PlayerName);
+            outfit.PlayerName,
+            CrewmateAvatarRenderer.IsConcealed(pc));
     }
 
     // Color-blind fingerprint compare: true when at most the body ColorId differs. Lets the consumer
@@ -1443,7 +1444,8 @@ public static class PingTrackerPatch
         && a.HatId == b.HatId
         && a.SkinId == b.SkinId
         && a.VisorId == b.VisorId
-        && a.PlayerName == b.PlayerName;
+        && a.PlayerName == b.PlayerName
+        && a.Concealed == b.Concealed;
 
     // Built once per frame so FindPlayer is O(1) instead of re-scanning the IL2CPP list per speaker.
     private static void RebuildPlayerLookup()
@@ -1467,6 +1469,10 @@ public static class PingTrackerPatch
 
     private static int GetPlayerColorId(PlayerControl pc)
     {
+        if (MeetingHud.Instance != null)
+        {
+            try { return GetDisplayOutfit(pc).ColorId; } catch { }
+        }
         int bodyColor;
         try { bodyColor = pc.cosmetics.bodyMatProperties.ColorId; }
         catch { try { return GetDisplayOutfit(pc).ColorId; } catch { return 0; } }
@@ -1489,6 +1495,8 @@ public static class PingTrackerPatch
     {
         try
         {
+            // Match the meeting UI / avatar: in a meeting the bar shows the real outfit, never the live disguise.
+            if (MeetingHud.Instance != null) return pc.Data.DefaultOutfit;
             return pc.CurrentOutfit ?? pc.Data.DefaultOutfit;
         }
         catch
@@ -1570,7 +1578,7 @@ public static class PingTrackerPatch
 
     // ── Data types ─────────────────────────────────────────────────────────────
     private readonly record struct OutfitFingerprint(
-        int OutfitTypeId, int ColorId, string HatId, string SkinId, string VisorId, string PlayerName);
+        int OutfitTypeId, int ColorId, string HatId, string SkinId, string VisorId, string PlayerName, bool Concealed);
 
     private class SpeakerSlot
     {

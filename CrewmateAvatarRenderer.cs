@@ -4,6 +4,7 @@ using System.Reflection;
 using Il2CppInterop.Runtime.Injection;
 using UnityEngine;
 using Object = UnityEngine.Object;
+using VoiceChatPlugin.VoiceChat;
 
 namespace VoiceChatPlugin;
 
@@ -382,9 +383,22 @@ internal static class CrewmateAvatarRenderer
     // type 0 is additionally treated as concealed when its outfit looks camouflaged (HNS global camo stamps the
     // name "???"; Venerer camo empties all cosmetics and blanks the name). A normal type-0 player keeps a real
     // (non-empty) name, so is never falsely concealed.
+    // Comms sabotage hides everyone in the bar (you can't ID who is talking while comms is down). This outranks
+    // the meeting real-identity reveal, so a meeting called while comms is still active stays grey.
+    private static bool CommsConcealmentActive()
+    {
+        try
+        {
+            var snap = VoiceChatRoom.Current?.CurrentSnapshot;
+            return snap != null && snap.CommsSabotageActive && VoiceRoomSettingsState.Current.CommsSabDisables;
+        }
+        catch { return false; }
+    }
+
     internal static bool IsConcealed(PlayerControl? pc)
     {
         if (pc?.Data == null) return false;
+        if (CommsConcealmentActive()) return true;
         try
         {
             int outfitType = (int)pc.CurrentOutfitType;
@@ -679,6 +693,10 @@ internal static class CrewmateAvatarRenderer
 
     private static int GetPlayerColorId(PlayerControl pc)
     {
+        if (MeetingHud.Instance != null)
+        {
+            try { return GetDisplayOutfit(pc).ColorId; } catch { }
+        }
         int bodyColor;
         try { bodyColor = pc.cosmetics.bodyMatProperties.ColorId; }
         catch { try { return GetDisplayOutfit(pc).ColorId; } catch { return 0; } }
@@ -701,6 +719,8 @@ internal static class CrewmateAvatarRenderer
     {
         try
         {
+            // In a meeting the bar matches the meeting UI (real identity); concealed players still gray via IsConcealed.
+            if (MeetingHud.Instance != null) return pc.Data.DefaultOutfit;
             return pc.CurrentOutfit ?? pc.Data.DefaultOutfit;
         }
         catch
