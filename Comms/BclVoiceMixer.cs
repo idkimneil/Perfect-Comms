@@ -58,6 +58,16 @@ internal sealed class BclVoiceMixer
     private int _wallTailSamples;
     private float _limiterGain = 1f;
 
+    private long _diagReadCalls;
+    private int _diagChunkMin = int.MaxValue;
+    private int _diagChunkMax;
+    private long _diagUnderrunReads;
+    private long _diagFadeOuts;
+    private long _diagPrimes;
+    private long _diagUnprimes;
+    private long _diagSilentSamples;
+    private int _diagMaxRingDepth;
+
     public void AddSamples(int group, float[] mono, int count, bool silent)
     {
         if (count <= 0) return;
@@ -122,6 +132,25 @@ internal sealed class BclVoiceMixer
             _peers.Remove(group);
     }
 
+    public string FormatPlayoutDiagnostics()
+    {
+        lock (_sync)
+        {
+            var chunkMin = _diagChunkMin == int.MaxValue ? 0 : _diagChunkMin;
+            var s = $"primeSamples={PrimeSamples} reads={_diagReadCalls} chunk={chunkMin}-{_diagChunkMax} maxRingDepth={_diagMaxRingDepth} underrunReads={_diagUnderrunReads} fadeOuts={_diagFadeOuts} primes={_diagPrimes} unprimes={_diagUnprimes} silentSamples={_diagSilentSamples}";
+            _diagReadCalls = 0;
+            _diagChunkMin = int.MaxValue;
+            _diagChunkMax = 0;
+            _diagUnderrunReads = 0;
+            _diagFadeOuts = 0;
+            _diagPrimes = 0;
+            _diagUnprimes = 0;
+            _diagSilentSamples = 0;
+            _diagMaxRingDepth = 0;
+            return s;
+        }
+    }
+
     public void Read(float[] interleavedStereo)
     {
         Array.Clear(interleavedStereo, 0, interleavedStereo.Length);
@@ -137,6 +166,9 @@ internal sealed class BclVoiceMixer
         const float wInc = MathF.PI / FadeSamples;
         lock (_sync)
         {
+            _diagReadCalls++;
+            if (frames < _diagChunkMin) _diagChunkMin = frames;
+            if (frames > _diagChunkMax) _diagChunkMax = frames;
             foreach (var p in _peers.Values)
             {
                 if (!p.Primed)
@@ -146,6 +178,14 @@ internal sealed class BclVoiceMixer
                     else
                         continue;
                 }
+                if (p.Count > _diagMaxRingDepth) _diagMaxRingDepth = p.Count;
+                if (p.Count < frames)
+                {
+                    _diagUnderrunReads++;
+                    _diagSilentSamples += frames - p.Count;
+                }
+                if (p.Count <= frames)
+                    _diagFadeOuts++;
                 var ghost = p.Mode == VoiceAudioFilterMode.Ghost;
                 var wall = p.Mode == VoiceAudioFilterMode.WallMuffle || p.Mode == VoiceAudioFilterMode.ListenerMuffle;
                 anyGhost |= ghost;
@@ -177,6 +217,7 @@ internal sealed class BclVoiceMixer
                 {
                     p.Primed = false;
                     p.PrimeDeadline = DateTime.MinValue;
+                    _diagUnprimes++;
                 }
             }
         }
@@ -265,6 +306,7 @@ internal sealed class BclVoiceMixer
         p.Primed = true;
         p.PrimeDeadline = DateTime.MinValue;
         p.FadeRemaining = FadeSamples;
+        _diagPrimes++;
         p.Bz1 = 0f;
         p.Bz2 = 0f;
         p.CurLeft = p.LeftGain * p.Volume * p.ClientVolume;
