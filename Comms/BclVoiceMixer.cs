@@ -14,10 +14,17 @@ internal sealed class BclVoiceMixer
     private const float RadioLevel = 0.75f;
     private const float GhostDry = 0.6f;
     private const float GhostWet = 0.08f;
+    private const float WallDry = 0.85f;
+    private const float WallWet = 0.12f;
 
     private static readonly Biquad Lp650 = Biquad.Lowpass(650f, 0.7f);
     private static readonly Biquad Hp650 = Biquad.Highpass(650f, 0.9f);
     private static readonly Biquad Lp1900 = Biquad.Lowpass(1900f, 0.7f);
+
+    private static readonly int[] GhostCombs = { 1214, 1293, 1390, 1476 };
+    private static readonly int[] GhostAllpass = { 605, 480 };
+    private static readonly int[] WallCombs = { 397, 439, 491, 547 };
+    private static readonly int[] WallAllpass = { 185, 141 };
 
     private sealed class Peer
     {
@@ -41,11 +48,14 @@ internal sealed class BclVoiceMixer
 
     private readonly Dictionary<int, Peer> _peers = new();
     private readonly object _sync = new();
-    private readonly GhostReverb _ghostReverb = new();
+    private readonly Reverb _ghostReverb = new(GhostCombs, GhostAllpass, 0.82f, 25);
+    private readonly Reverb _wallReverb = new(WallCombs, WallAllpass, 0.6f, 11);
     private float[] _ghostSend = Array.Empty<float>();
+    private float[] _wallSend = Array.Empty<float>();
     private float _ghostLpZ1;
     private float _ghostLpZ2;
     private int _ghostTailSamples;
+    private int _wallTailSamples;
     private float _limiterGain = 1f;
 
     public void AddSamples(int group, float[] mono, int count, bool silent)
@@ -118,8 +128,12 @@ internal sealed class BclVoiceMixer
         var frames = interleavedStereo.Length / 2;
         if (_ghostSend.Length != interleavedStereo.Length)
             _ghostSend = new float[interleavedStereo.Length];
+        if (_wallSend.Length != interleavedStereo.Length)
+            _wallSend = new float[interleavedStereo.Length];
         Array.Clear(_ghostSend, 0, _ghostSend.Length);
+        Array.Clear(_wallSend, 0, _wallSend.Length);
         var anyGhost = false;
+        var anyWall = false;
         const float wInc = MathF.PI / FadeSamples;
         lock (_sync)
         {
@@ -133,8 +147,10 @@ internal sealed class BclVoiceMixer
                         continue;
                 }
                 var ghost = p.Mode == VoiceAudioFilterMode.Ghost;
+                var wall = p.Mode == VoiceAudioFilterMode.WallMuffle || p.Mode == VoiceAudioFilterMode.ListenerMuffle;
                 anyGhost |= ghost;
-                var bus = ghost ? _ghostSend : interleavedStereo;
+                anyWall |= wall;
+                var bus = ghost ? _ghostSend : wall ? _wallSend : interleavedStereo;
                 var targetL = p.LeftGain * p.Volume * p.ClientVolume;
                 var targetR = p.RightGain * p.Volume * p.ClientVolume;
                 var n = Math.Min(frames, p.Count);
@@ -189,6 +205,31 @@ internal sealed class BclVoiceMixer
                     _ghostLpZ1 = 0f;
                     _ghostLpZ2 = 0f;
                     _ghostTailSamples = 0;
+                }
+            }
+        }
+
+        // Wall/occlusion reverb send: short small-room ambience on the already-muffled voice (the dry voice is
+        // carried by WallDry, so an occluded talker sounds like they are in the next room, not just dampened).
+        if (anyWall)
+            _wallTailSamples = AudioHelpers.ClockRate;
+        if (anyWall || _wallTailSamples > 0)
+        {
+            for (var f = 0; f < frames; f++)
+            {
+                var l = _wallSend[f * 2];
+                var r = _wallSend[f * 2 + 1];
+                _wallReverb.Process((l + r) * 0.5f, out var wetL, out var wetR);
+                interleavedStereo[f * 2] += WallDry * l + WallWet * wetL;
+                interleavedStereo[f * 2 + 1] += WallDry * r + WallWet * wetR;
+            }
+            if (!anyWall)
+            {
+                _wallTailSamples -= frames;
+                if (_wallTailSamples <= 0)
+                {
+                    _wallReverb.Reset();
+                    _wallTailSamples = 0;
                 }
             }
         }
@@ -278,42 +319,40 @@ internal sealed class BclVoiceMixer
         }
     }
 
-    private sealed class GhostReverb
+    private sealed class Reverb
     {
-        private const float Feedback = 0.82f;
         private const float Damp1 = 0.2f;
         private const float Damp2 = 0.8f;
         private const float ApFeedback = 0.5f;
         private const float InGain = 0.5f;
-        private const int Spread = 25;
-        private static readonly int[] CombLen = { 1214, 1293, 1390, 1476 };
-        private static readonly int[] ApLen = { 605, 480 };
 
+        private readonly float _feedback;
         private readonly float[][] _combL, _combR, _apL, _apR;
         private readonly int[] _ciL, _ciR, _aiL, _aiR;
         private readonly float[] _filtL, _filtR;
 
-        public GhostReverb()
+        public Reverb(int[] combLen, int[] apLen, float feedback, int spread)
         {
-            _combL = new float[CombLen.Length][];
-            _combR = new float[CombLen.Length][];
-            _ciL = new int[CombLen.Length];
-            _ciR = new int[CombLen.Length];
-            _filtL = new float[CombLen.Length];
-            _filtR = new float[CombLen.Length];
-            for (var i = 0; i < CombLen.Length; i++)
+            _feedback = feedback;
+            _combL = new float[combLen.Length][];
+            _combR = new float[combLen.Length][];
+            _ciL = new int[combLen.Length];
+            _ciR = new int[combLen.Length];
+            _filtL = new float[combLen.Length];
+            _filtR = new float[combLen.Length];
+            for (var i = 0; i < combLen.Length; i++)
             {
-                _combL[i] = new float[CombLen[i]];
-                _combR[i] = new float[CombLen[i] + Spread];
+                _combL[i] = new float[combLen[i]];
+                _combR[i] = new float[combLen[i] + spread];
             }
-            _apL = new float[ApLen.Length][];
-            _apR = new float[ApLen.Length][];
-            _aiL = new int[ApLen.Length];
-            _aiR = new int[ApLen.Length];
-            for (var i = 0; i < ApLen.Length; i++)
+            _apL = new float[apLen.Length][];
+            _apR = new float[apLen.Length][];
+            _aiL = new int[apLen.Length];
+            _aiR = new int[apLen.Length];
+            for (var i = 0; i < apLen.Length; i++)
             {
-                _apL[i] = new float[ApLen[i]];
-                _apR[i] = new float[ApLen[i] + Spread];
+                _apL[i] = new float[apLen[i]];
+                _apR[i] = new float[apLen[i] + spread];
             }
         }
 
@@ -321,12 +360,12 @@ internal sealed class BclVoiceMixer
         {
             var x = input * InGain;
             float l = 0f, r = 0f;
-            for (var i = 0; i < CombLen.Length; i++)
+            for (var i = 0; i < _combL.Length; i++)
             {
                 l += Comb(_combL[i], ref _ciL[i], ref _filtL[i], x);
                 r += Comb(_combR[i], ref _ciR[i], ref _filtR[i], x);
             }
-            for (var i = 0; i < ApLen.Length; i++)
+            for (var i = 0; i < _apL.Length; i++)
             {
                 l = Allpass(_apL[i], ref _aiL[i], l);
                 r = Allpass(_apR[i], ref _aiR[i], r);
@@ -337,13 +376,13 @@ internal sealed class BclVoiceMixer
 
         public void Reset()
         {
-            for (var i = 0; i < CombLen.Length; i++)
+            for (var i = 0; i < _combL.Length; i++)
             {
                 Array.Clear(_combL[i], 0, _combL[i].Length);
                 Array.Clear(_combR[i], 0, _combR[i].Length);
                 _ciL[i] = 0; _ciR[i] = 0; _filtL[i] = 0f; _filtR[i] = 0f;
             }
-            for (var i = 0; i < ApLen.Length; i++)
+            for (var i = 0; i < _apL.Length; i++)
             {
                 Array.Clear(_apL[i], 0, _apL[i].Length);
                 Array.Clear(_apR[i], 0, _apR[i].Length);
@@ -351,11 +390,11 @@ internal sealed class BclVoiceMixer
             }
         }
 
-        private static float Comb(float[] buf, ref int idx, ref float store, float input)
+        private float Comb(float[] buf, ref int idx, ref float store, float input)
         {
             var y = buf[idx];
             store = y * Damp2 + store * Damp1;
-            buf[idx] = input + store * Feedback;
+            buf[idx] = input + store * _feedback;
             if (++idx >= buf.Length) idx = 0;
             return y;
         }
