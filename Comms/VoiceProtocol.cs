@@ -2,14 +2,6 @@ using System;
 
 namespace VoiceChatPlugin.VoiceChat;
 
-internal enum VoicePacketType : byte
-{
-    Audio = 0,
-    Profile = 1,
-    JailVoice = 2,
-    Custom = 3,
-}
-
 [Flags]
 internal enum VoiceFrameFlags : byte
 {
