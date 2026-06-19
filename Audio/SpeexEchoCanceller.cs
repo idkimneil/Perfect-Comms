@@ -69,8 +69,8 @@ internal sealed unsafe class SpeexEchoCanceller : IDisposable
         if (!TryLoadNative(out var native, out error))
             return false;
 
-        IntPtr echo;
-        IntPtr preprocess;
+        IntPtr echo = IntPtr.Zero;
+        IntPtr preprocess = IntPtr.Zero;
         try
         {
             echo = native.EchoInit(frameSize, FilterTaps);
@@ -106,6 +106,8 @@ internal sealed unsafe class SpeexEchoCanceller : IDisposable
         }
         catch (Exception ex)
         {
+            if (preprocess != IntPtr.Zero) native.PreprocessDestroy(preprocess);
+            if (echo != IntPtr.Zero) native.EchoDestroy(echo);
             error = $"init:{ex.Message}";
             return false;
         }
