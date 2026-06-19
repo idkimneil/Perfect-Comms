@@ -41,6 +41,9 @@ internal sealed class AndroidMicrophone : IDisposable
     // Fires on main thread (via Tick) with (float[] buf, int length)
     public event Action<float[], int>? DataAvailable;
 
+    public bool ReuseBuffer { get; set; }
+    private float[] _pollBuf = Array.Empty<float>();
+
     public void SetVolume(float v) => _volume = Math.Clamp(v, 0f, 4f);
 
     /// <summary>
@@ -114,12 +117,22 @@ internal sealed class AndroidMicrophone : IDisposable
     {
         if (_clip == null || count <= 0) return;
 
-        var buf = new float[count];
+        float[] buf;
+        if (ReuseBuffer)
+        {
+            if (_pollBuf.Length < count) _pollBuf = new float[count];
+            buf = _pollBuf;
+        }
+        else
+        {
+            buf = new float[count];
+        }
+
         _clip.GetData(buf, start);
         if (_volume != 1f)
-            for (int i = 0; i < buf.Length; i++) buf[i] *= _volume;
+            for (int i = 0; i < count; i++) buf[i] *= _volume;
 
-        DataAvailable?.Invoke(buf, buf.Length);
+        DataAvailable?.Invoke(buf, count);
     }
 
     public void Dispose() => Stop();

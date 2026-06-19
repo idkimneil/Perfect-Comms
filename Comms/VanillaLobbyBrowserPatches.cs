@@ -221,7 +221,12 @@ internal static class VanillaLobbyBrowserRowUi
     private static string? _lastWarning;
 
     private static FieldInfo? SafeField(Type type, string name)
-        => type.GetField(name, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+    {
+        var field = type.GetField(name, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+        if (field == null)
+            WarnOnce($"{type.Name}.{name} not found (game update?); lobby-browser detail disabled");
+        return field;
+    }
 
     internal static void RefreshVisibleRows(FindAGameManager manager)
     {
@@ -439,7 +444,12 @@ internal static class VanillaLobbyMoreInfoUi
     private static string? _lastWarning;
 
     private static FieldInfo? SafeField(Type type, string name)
-        => type.GetField(name, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+    {
+        var field = type.GetField(name, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+        if (field == null)
+            WarnOnce($"{type.Name}.{name} not found (game update?); lobby-browser detail disabled");
+        return field;
+    }
 
     internal static void Apply(FindGameMoreInfoPopup popup, GameListing gameListing)
     {

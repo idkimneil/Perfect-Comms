@@ -945,13 +945,19 @@ internal static class VoiceUiKit
 
         private float Normalized() => Mathf.Approximately(_max, _min) ? 0f : Mathf.Clamp01((_get() - _min) / (_max - _min));
 
+        private float _lastRaw = float.NaN;
         private void ApplyVisual(float t)
         {
             float w = _track.sizeDelta.x;
             _fill.sizeDelta = new Vector2(w * t, 9f);
             _fillGlow.rectTransform.sizeDelta = new Vector2(w * t + 14f, 22f);
             _knob.anchoredPosition = new Vector2(w * t, 0f);
-            _value.text = _fmt(_get());
+            float raw = _get();
+            if (raw != _lastRaw)
+            {
+                _lastRaw = raw;
+                _value.text = _fmt(raw);
+            }
         }
 
         public override void OnMouseDown()
@@ -1512,6 +1518,8 @@ internal static class VoiceUiKit
         private static string ValueColor(float v)
             => v < 0.005f ? "#8C9CB2" : v > 1.005f ? "#F2AB3D" : "#22D3EE";
 
+        private int _lastPct = int.MinValue;
+        private string? _lastValueColor;
         private void ApplyVisual()
         {
             float v = Mathf.Clamp(_get(), _min, _max);
@@ -1519,7 +1527,14 @@ internal static class VoiceUiKit
             _fill.sizeDelta = new Vector2(_trackW * t, 9f);
             _fillImg.color = FillColor(v);
             _knob.anchoredPosition = new Vector2(_trackW * t, 0f);
-            _value.text = $"<color={ValueColor(v)}>{Mathf.RoundToInt(v * 100f)}%</color>";
+            int pct = Mathf.RoundToInt(v * 100f);
+            string c = ValueColor(v);
+            if (pct != _lastPct || !ReferenceEquals(c, _lastValueColor))
+            {
+                _lastPct = pct;
+                _lastValueColor = c;
+                _value.text = $"<color={c}>{pct}%</color>";
+            }
         }
 
         public void SetLevel(float level, bool speaking)

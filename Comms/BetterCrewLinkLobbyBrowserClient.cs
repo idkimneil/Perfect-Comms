@@ -111,12 +111,19 @@ internal static class BetterCrewLinkLobbyBrowserClient
 
         socket.On("remove_lobby", response =>
         {
-            var id = response.GetValue<int>(0);
-            lock (Gate)
+            try
             {
-                if (!ReferenceEquals(_socket, socket)) return;
-                Listings.Remove(id);
-                _dirty = true;
+                var id = response.GetValue<int>(0);
+                lock (Gate)
+                {
+                    if (!ReferenceEquals(_socket, socket)) return;
+                    Listings.Remove(id);
+                    _dirty = true;
+                }
+            }
+            catch (Exception ex)
+            {
+                MarkParseFailed(ex);
             }
         });
 

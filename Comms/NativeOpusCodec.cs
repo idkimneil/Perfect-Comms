@@ -79,29 +79,38 @@ internal static unsafe class OpusNative
     private static bool _loaded;
     private static IntPtr _handle;
 
+    public static string? LoadError { get; private set; }
+
     public static void EnsureLoaded()
     {
-        if (_loaded) return;
+        if (_loaded || LoadError != null) return;
         lock (LoadLock)
         {
-            if (_loaded) return;
-            var path = ExtractNativeLibrary();
-            _handle = NativeLibrary.Load(path);
-            OpusEncoderCreate = Export<EncoderCreate>("opus_encoder_create");
-            OpusEncoderCtl = Export<EncoderCtl>("opus_encoder_ctl");
-            OpusEncode = Export<Encode>("opus_encode");
-            OpusEncoderDestroy = Export<EncoderDestroy>("opus_encoder_destroy");
-            OpusDecoderCreate = Export<DecoderCreate>("opus_decoder_create");
-            OpusDecode = Export<Decode>("opus_decode");
-            OpusDecodeFloat = Export<DecodeFloat>("opus_decode_float");
-            OpusDecoderDestroy = Export<DecoderDestroy>("opus_decoder_destroy");
-            OpusDredDecoderCreate = Export<DredDecoderCreate>("opus_dred_decoder_create");
-            OpusDredDecoderDestroy = Export<DredDecoderDestroy>("opus_dred_decoder_destroy");
-            OpusDredAlloc = Export<DredAlloc>("opus_dred_alloc");
-            OpusDredFree = Export<DredFree>("opus_dred_free");
-            OpusDredParse = Export<DredParse>("opus_dred_parse");
-            OpusDecoderDredDecode = Export<DecoderDredDecode>("opus_decoder_dred_decode");
-            _loaded = true;
+            if (_loaded || LoadError != null) return;
+            try
+            {
+                var path = ExtractNativeLibrary();
+                _handle = NativeLibrary.Load(path);
+                OpusEncoderCreate = Export<EncoderCreate>("opus_encoder_create");
+                OpusEncoderCtl = Export<EncoderCtl>("opus_encoder_ctl");
+                OpusEncode = Export<Encode>("opus_encode");
+                OpusEncoderDestroy = Export<EncoderDestroy>("opus_encoder_destroy");
+                OpusDecoderCreate = Export<DecoderCreate>("opus_decoder_create");
+                OpusDecode = Export<Decode>("opus_decode");
+                OpusDecodeFloat = Export<DecodeFloat>("opus_decode_float");
+                OpusDecoderDestroy = Export<DecoderDestroy>("opus_decoder_destroy");
+                OpusDredDecoderCreate = Export<DredDecoderCreate>("opus_dred_decoder_create");
+                OpusDredDecoderDestroy = Export<DredDecoderDestroy>("opus_dred_decoder_destroy");
+                OpusDredAlloc = Export<DredAlloc>("opus_dred_alloc");
+                OpusDredFree = Export<DredFree>("opus_dred_free");
+                OpusDredParse = Export<DredParse>("opus_dred_parse");
+                OpusDecoderDredDecode = Export<DecoderDredDecode>("opus_decoder_dred_decode");
+                _loaded = true;
+            }
+            catch (Exception ex)
+            {
+                LoadError = ex.Message;
+            }
         }
     }
 
@@ -135,9 +144,19 @@ internal sealed unsafe class NativeOpusEncoder : IVoiceEncoder
     public NativeOpusEncoder(int bitrate, int complexity, bool voiceSignal, bool vbr, bool constrainedVbr, bool dtx, bool fec, int packetLossPercent)
     {
         OpusNative.EnsureLoaded();
+        if (OpusNative.LoadError != null)
+        {
+            VoiceDiagnostics.DebugWarning($"[VC] opus native unavailable ({OpusNative.LoadError}); voice encode disabled");
+            _enc = IntPtr.Zero;
+            return;
+        }
         _enc = OpusNative.OpusEncoderCreate(AudioHelpers.ClockRate, AudioHelpers.Channels, OpusNative.OPUS_APPLICATION_VOIP, out var err);
         if (_enc == IntPtr.Zero || err != OpusNative.OPUS_OK)
-            throw new InvalidOperationException($"opus_encoder_create failed: {err}");
+        {
+            VoiceDiagnostics.DebugWarning($"[VC] opus_encoder_create failed: {err}; voice encode disabled");
+            _enc = IntPtr.Zero;
+            return;
+        }
         Ctl(OpusNative.OPUS_SET_BITRATE, bitrate);
         Ctl(OpusNative.OPUS_SET_COMPLEXITY, complexity);
         Ctl(OpusNative.OPUS_SET_SIGNAL, voiceSignal ? OpusNative.OPUS_SIGNAL_VOICE : OpusNative.OPUS_SIGNAL_AUTO);
@@ -215,9 +234,19 @@ internal sealed unsafe class NativeOpusDecoder : IVoiceDecoder
     public NativeOpusDecoder()
     {
         OpusNative.EnsureLoaded();
+        if (OpusNative.LoadError != null)
+        {
+            VoiceDiagnostics.DebugWarning($"[VC] opus native unavailable ({OpusNative.LoadError}); voice decode disabled");
+            _dec = IntPtr.Zero;
+            return;
+        }
         _dec = OpusNative.OpusDecoderCreate(AudioHelpers.ClockRate, AudioHelpers.Channels, out var err);
         if (_dec == IntPtr.Zero || err != OpusNative.OPUS_OK)
-            throw new InvalidOperationException($"opus_decoder_create failed: {err}");
+        {
+            VoiceDiagnostics.DebugWarning($"[VC] opus_decoder_create failed: {err}; voice decode disabled");
+            _dec = IntPtr.Zero;
+            return;
+        }
     }
 
     // Empty data => packet-loss concealment; native libopus 1.6.1 uses neural deep PLC to synthesize the gap.

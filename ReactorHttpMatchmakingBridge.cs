@@ -22,11 +22,17 @@ internal static class GameStartManagerModdedRegionPatch
 
 internal static class ReactorHttpMatchmakingBridge
 {
-    private static readonly FieldInfo? HostPublicButtonField =
-        AccessTools.Field(typeof(GameStartManager), "HostPublicButton");
-    private static readonly FieldInfo? HostPrivateButtonField =
-        AccessTools.Field(typeof(GameStartManager), "HostPrivateButton");
+    private static readonly FieldInfo? HostPublicButtonField = ResolveField("HostPublicButton");
+    private static readonly FieldInfo? HostPrivateButtonField = ResolveField("HostPrivateButton");
     private static string? _lastWarning;
+
+    private static FieldInfo? ResolveField(string name)
+    {
+        var field = AccessTools.Field(typeof(GameStartManager), name);
+        if (field == null)
+            WarnOnce($"GameStartManager.{name} not found (game update?); public-lobby toggle disabled");
+        return field;
+    }
 
     internal static bool IsKnownModdedRegion()
     {

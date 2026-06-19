@@ -305,6 +305,7 @@ public static class VoiceSettingsPanel
         Toggle(defs, "Noise Suppression", s.NoiseSuppressionEnabled);
         Toggle(defs, "Echo Cancellation", s.EchoCancellationEnabled);
         Toggle(defs, "Auto Mic Gain", s.AutoMicGain);
+        Toggle(defs, "Clean Input (TTS)", s.CleanInput);
         Slider(defs, "Voice Falloff Softness", s.VoiceFalloffSoftness, Pct);
         Section(defs, "STARTUP");
         Toggle(defs, "Start Muted", s.StartMuted);

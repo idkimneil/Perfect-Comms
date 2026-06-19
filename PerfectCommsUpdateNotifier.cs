@@ -120,7 +120,7 @@ internal static class PerfectCommsUpdateNotifier
         panelArt.transform.localPosition = new Vector3(0f, 0f, -0.05f);
         var sr = panelArt.AddComponent<SpriteRenderer>();
         sr.sprite = VoiceChatHudState.LoadSprite("VoiceChatPlugin.Resources.LobbyBrowserPanel.png")
-                    ?? SolidSprite(new Color(0.02f, 0.06f, 0.10f, 0.94f));
+                    ?? VoiceUiKit.Solid(new Color(0.02f, 0.06f, 0.10f, 0.94f));
         sr.sortingLayerName = "UI";
         sr.sortingOrder = SortBase;
 
@@ -136,7 +136,7 @@ internal static class PerfectCommsUpdateNotifier
         line.transform.localPosition = new Vector3(0f, 0.035f, -0.10f);
         line.transform.localScale = new Vector3(1.48f, 0.012f, 1f);
         var sr = line.AddComponent<SpriteRenderer>();
-        sr.sprite = SolidSprite(Accent);
+        sr.sprite = VoiceUiKit.Solid(Accent);
         sr.sortingLayerName = "UI";
         sr.sortingOrder = SortBase + 2;
     }
@@ -159,13 +159,6 @@ internal static class PerfectCommsUpdateNotifier
         return tmp;
     }
 
-    private static Sprite SolidSprite(Color color)
-    {
-        var tex = new Texture2D(1, 1, TextureFormat.RGBA32, false);
-        tex.SetPixel(0, 0, color);
-        tex.Apply(false, true);
-        return Sprite.Create(tex, new Rect(0, 0, 1, 1), new Vector2(0.5f, 0.5f), 1f);
-    }
 }
 
 [HarmonyPatch(typeof(MainMenuManager), nameof(MainMenuManager.Start))]

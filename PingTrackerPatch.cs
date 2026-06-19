@@ -345,7 +345,8 @@ public static class PingTrackerPatch
     static void Postfix(PingTracker __instance)
     {
         if (__instance?.text == null) return;
-        RenderOverlay(__instance);
+        try { RenderOverlay(__instance); }
+        catch (System.Exception ex) { LogOverlayError("PingTracker overlay", ex); }
     }
 
     // Drives the speaking-bar overlay on the end-game results screen, where no PingTracker ticks (its Update
@@ -383,8 +384,10 @@ public static class PingTrackerPatch
             _activeSpeakerLevels.Clear();
             _activeSpeakerNames.Clear();
 
-            foreach (var remote in overlay.RemotePlayers)
+            var remotes = overlay.RemotePlayers;
+            for (int i = 0; i < remotes.Count; i++)
             {
+                var remote = remotes[i];
                 if (remote.IsSpeaking && remote.IsAudible)
                 {
                     _activeSpeakerIds.Add(remote.PlayerId);
@@ -1412,6 +1415,7 @@ public static class PingTrackerPatch
             _fadedSlotIds.Clear();
             _playerLookup.Clear();
             VoiceOverlayState.InvalidateCache();
+            VoiceVolumeMenu.ForceClose();
             CrewmateAvatarRenderer.ClearCache();
             _layoutDirty = false;
             _sortingDirty = false;

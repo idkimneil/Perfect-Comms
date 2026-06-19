@@ -372,7 +372,28 @@ internal static class CrewmateAvatarRenderer
     // Lifecycle reset hook (called at HudManager.Start). Cosmetics are placed at fixed offsets from the live outfit,
     // so there is nothing there to clear; we only drop the rainbow color-id memo so a result that happened to resolve
     // before Town of Us finished registering its colors can never stay stale into the next game.
-    internal static void ClearCache() { RainbowColorIdCache.Clear(); OutfitCache.Clear(); }
+    internal static void ClearCache()
+    {
+        RainbowColorIdCache.Clear();
+        OutfitCache.Clear();
+        DestroySpriteCache(BaseSpriteCache);
+        DestroySpriteCache(RainbowSpriteCache);
+        if (concealedBaseSprite != null) { DestroySprite(concealedBaseSprite); concealedBaseSprite = null; }
+    }
+
+    private static void DestroySpriteCache(Dictionary<int, Sprite> cache)
+    {
+        foreach (var kv in cache) DestroySprite(kv.Value);
+        cache.Clear();
+    }
+
+    private static void DestroySprite(Sprite? sprite)
+    {
+        if (sprite == null) return;
+        var tex = sprite.texture;
+        Object.Destroy(sprite);
+        if (tex != null) Object.Destroy(tex);
+    }
 
     public static bool IsCustomIcon(GameObject go)
         => go != null && go.name.StartsWith("VC_SpriteIcon_");

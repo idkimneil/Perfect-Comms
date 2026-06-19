@@ -18,6 +18,8 @@ internal sealed class InterstellarVoiceBackend : IVoiceBackend
     // Concurrent: VCRoom callbacks fire on relay/socket threads while the Unity thread iterates;
     // ConcurrentDictionary enumeration never throws on concurrent mutation (Dictionary would).
     private readonly ConcurrentDictionary<int, Peer> _peers = new();
+    private volatile Peer[] _peerSnapshot = System.Array.Empty<Peer>();
+    private void RebuildPeerSnapshot() => _peerSnapshot = _peers.Values.ToArray();
     private readonly StereoRouter _imager;
     private readonly VolumeRouter _normalVolume;
     private readonly VolumeRouter _ghostVolume;
@@ -127,9 +129,10 @@ internal sealed class InterstellarVoiceBackend : IVoiceBackend
     // access. ConcurrentDictionary enumeration is safe against concurrent connect/disconnect.
     public void AppendRemoteOverlayStates(List<VoiceRemoteOverlayState> buffer)
     {
-        foreach (var kv in _peers)
+        var peers = _peerSnapshot;
+        for (int i = 0; i < peers.Length; i++)
         {
-            var peer = kv.Value;
+            var peer = peers[i];
             if (peer.PlayerId == byte.MaxValue) continue;
             buffer.Add(peer.ToOverlayState());
         }
@@ -143,9 +146,10 @@ internal sealed class InterstellarVoiceBackend : IVoiceBackend
     {
         var players = snapshot.Players;
         int count = 0;
-        foreach (var kvp in _peers)
+        var peers = _peerSnapshot;
+        for (int p = 0; p < peers.Length; p++)
         {
-            var peer = kvp.Value;
+            var peer = peers[p];
             for (int i = 0; i < players.Count; i++)
             {
                 var player = players[i];
@@ -260,6 +264,7 @@ internal sealed class InterstellarVoiceBackend : IVoiceBackend
                     else
                     {
                         _peers[clientId] = new Peer(clientId, instance, _imager, _normalVolume, _ghostVolume, _radioVolume, _listenerMuffleVolume, _clientVolume, _levelMeter);
+                        RebuildPeerSnapshot();
                         VoiceDiagnostics.Log("interstellar.peer-connected", $"client={clientId}");
                     }
                 },
@@ -275,6 +280,7 @@ internal sealed class InterstellarVoiceBackend : IVoiceBackend
                 OnDisconnect = clientId =>
                 {
                     _peers.TryRemove(clientId, out _);
+                    RebuildPeerSnapshot();
                     VoiceDiagnostics.Log("interstellar.peer-disconnected", $"client={clientId}");
                 },
                 MessageHandler = HandleCustomMessage,
@@ -529,7 +535,7 @@ internal sealed class InterstellarVoiceBackend : IVoiceBackend
             {
                 _micPreprocessor.ApplyHighPass(floatPcm, samples);
                 _micPreprocessor.ApplyAutoGain(floatPcm, samples, _autoMicGain, out _);
-                if (_captureOptions.NoiseSuppressionEnabled)
+                if (_captureOptions.NoiseSuppressionEnabled && !_captureOptions.CleanInput)
                     _micPreprocessor.TryApplyNoiseSuppression(floatPcm, samples);
             }
         }
@@ -855,6 +861,7 @@ internal sealed class InterstellarVoiceBackend : IVoiceBackend
     public void Rejoin()
     {
         _peers.Clear();
+        RebuildPeerSnapshot();
         _room.Rejoin();
         _lastPlayerId = byte.MaxValue;
         _lastPlayerName = string.Empty;
@@ -971,6 +978,7 @@ internal sealed class InterstellarVoiceBackend : IVoiceBackend
         StopMicrophone("dispose");
         try { _room.Disconnect(); } catch { }
         _peers.Clear();
+        RebuildPeerSnapshot();
 #if WINDOWS
         _speakerRequested = false;
         try { lock (_micProcessSync) _micPreprocessor.Dispose(); } catch { }

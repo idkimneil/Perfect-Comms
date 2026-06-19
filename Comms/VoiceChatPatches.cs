@@ -15,6 +15,7 @@ public static class VoiceChatPatches
     private static int _lastHostRefreshFrame = -1;
     private static int _lastRadioChannelCycleFrame = -1;
     private static int _lastMicModeToggleFrame = -1;
+    private static System.DateTime _lastKbErrorLogUtc;
 
     internal static void RegisterKeybindHandlers()
     {
@@ -38,33 +39,45 @@ public static class VoiceChatPatches
         VoiceChatKeybinds.CycleTeamRadioChannel.FireIfPressed();
         VoiceChatKeybinds.ToggleMicMode.FireIfPressed();
 
-        bool canUseRadio = VoiceChatHudState.CanUseTeamRadioInput();
-        bool held = false;
-        bool down = false;
-        bool up = false;
-        if (canUseRadio)
+        try
         {
-            var radioHold = ReadHold(VoiceChatKeybinds.TeamRadio.IsHeld(), ref _radioInputHeld);
-            held = radioHold.Held;
-            down = radioHold.Down;
-            up = radioHold.Up;
+            bool canUseRadio = VoiceChatHudState.CanUseTeamRadioInput();
+            bool held = false;
+            bool down = false;
+            bool up = false;
+            if (canUseRadio)
+            {
+                var radioHold = ReadHold(VoiceChatKeybinds.TeamRadio.IsHeld(), ref _radioInputHeld);
+                held = radioHold.Held;
+                down = radioHold.Down;
+                up = radioHold.Up;
+            }
+            else
+            {
+                _radioInputHeld = false;
+            }
+
+            VoiceChatHudState.UpdateTeamRadioHold(held, down, up);
+
+            if (!VoiceChatHudState.IsPushToTalkMode())
+            {
+                _pushToTalkInputHeld = false;
+                VoiceChatHudState.UpdatePushToTalkHeld(false);
+                return;
+            }
+
+            bool pttHeld = ReadHold(VoiceChatKeybinds.PushToTalk.IsHeld(), ref _pushToTalkInputHeld).Held;
+            VoiceChatHudState.UpdatePushToTalkHeld(pttHeld);
         }
-        else
+        catch (System.Exception ex)
         {
-            _radioInputHeld = false;
+            var now = System.DateTime.UtcNow;
+            if ((now - _lastKbErrorLogUtc).TotalSeconds >= 5)
+            {
+                _lastKbErrorLogUtc = now;
+                VoiceDiagnostics.DebugError($"[VC] keyboard radio/PTT update failed: {ex.Message}");
+            }
         }
-
-        VoiceChatHudState.UpdateTeamRadioHold(held, down, up);
-
-        if (!VoiceChatHudState.IsPushToTalkMode())
-        {
-            _pushToTalkInputHeld = false;
-            VoiceChatHudState.UpdatePushToTalkHeld(false);
-            return;
-        }
-
-        bool pttHeld = ReadHold(VoiceChatKeybinds.PushToTalk.IsHeld(), ref _pushToTalkInputHeld).Held;
-        VoiceChatHudState.UpdatePushToTalkHeld(pttHeld);
     }
 
     internal static bool ShouldIgnoreToggleKeybinds()

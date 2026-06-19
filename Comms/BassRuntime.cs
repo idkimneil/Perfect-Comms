@@ -14,30 +14,44 @@ internal static class BassRuntime
     private static bool _configured;
     private static bool _nativeLoaded;
     private static IntPtr _nativeHandle;
+    private static string? _loadError;
     private static readonly object _sync = new();
 
     private static string ArchitectureLabel => Environment.Is64BitProcess ? "x64" : "x86";
 
-    public static void EnsureConfigured()
+    public static string? LoadError => _loadError;
+
+    public static bool EnsureConfigured()
     {
-        if (_configured) return;
+        if (_configured) return true;
         lock (_sync)
         {
-            if (_configured) return;
-            EnsureNativeLoaded();
+            if (_configured) return true;
+            if (_loadError != null) return false;
+            if (!EnsureNativeLoaded()) return false;
             Bass.Configure(Configuration.IncludeDefaultDevice, true);
             Bass.Configure(Configuration.PlaybackBufferLength, 180);
             Bass.Configure(Configuration.UpdatePeriod, 10);
             Bass.Configure(Configuration.Algorithm3D, (int)Algorithm3D.Full);
             _configured = true;
+            return true;
         }
     }
 
-    private static void EnsureNativeLoaded()
+    private static bool EnsureNativeLoaded()
     {
-        if (_nativeLoaded) return;
-        _nativeHandle = NativeLibrary.Load(ExtractNativeLibrary($"Lib.bass.{ArchitectureLabel}.dll", "bass.dll"));
+        if (_nativeLoaded) return true;
+        try
+        {
+            _nativeHandle = NativeLibrary.Load(ExtractNativeLibrary($"Lib.bass.{ArchitectureLabel}.dll", "bass.dll"));
+        }
+        catch (Exception ex)
+        {
+            _loadError = ex.Message;
+            return false;
+        }
         _nativeLoaded = true;
+        return true;
     }
 
     private static string ExtractNativeLibrary(string resourceName, string fileName)
@@ -120,7 +134,11 @@ internal static class BassRuntime
 
     public static bool SmokeTest(out string detail)
     {
-        EnsureConfigured();
+        if (!EnsureConfigured())
+        {
+            detail = _loadError ?? "bass-unavailable";
+            return false;
+        }
         if (Bass.Init())
         {
             Bass.Free();

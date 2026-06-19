@@ -112,6 +112,7 @@ internal static partial class VoiceRoleMuteState
 
     private static System.Reflection.MethodInfo? _getModifierMethod;
     private static Type? _getModifierMethodOwner;
+    private static object?[]? _getModifierArgs;
 
     private static object? GetModifier(PlayerControl player, Type? type)
     {
@@ -120,10 +121,10 @@ internal static partial class VoiceRoleMuteState
         if (extType == null) return null;
         var method = ResolveGetModifierMethod(extType);
         if (method == null) return null;
+        var args = _getModifierArgs;
+        if (args == null || args.Length < 2) return null;
         try
         {
-            var ps = method.GetParameters();
-            var args = new object?[ps.Length];
             args[0] = player;
             args[1] = type;
             return method.Invoke(null, args);
@@ -148,6 +149,7 @@ internal static partial class VoiceRoleMuteState
                 {
                     _getModifierMethod = m;
                     _getModifierMethodOwner = extType;
+                    _getModifierArgs = new object?[ps.Length];
                     return m;
                 }
             }

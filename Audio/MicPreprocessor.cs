@@ -389,7 +389,8 @@ internal sealed class MicPreprocessor : IDisposable
         int sampleCount,
         float manualGateThreshold,
         float vadThreshold,
-        float preSuppressionPeak)
+        float preSuppressionPeak,
+        bool cleanInput = false)
     {
         int count = Math.Min(sampleCount, pcm.Length);
         if (count <= 0)
@@ -410,6 +411,11 @@ internal sealed class MicPreprocessor : IDisposable
 
         float rms = (float)Math.Sqrt(sumSquares / count);
         float threshold = Math.Max(MinimumTransmitGate, manualGateThreshold);
+        if (cleanInput)
+        {
+            _hangoverFramesRemaining = HangoverFrames;
+            return new MicFrameDecision(true, peak, rms, threshold, "clean-bypass");
+        }
         if (peak >= threshold)
         {
             _hangoverFramesRemaining = HangoverFrames;

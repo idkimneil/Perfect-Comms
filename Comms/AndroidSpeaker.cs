@@ -88,10 +88,17 @@ internal sealed class AndroidSpeaker : IDisposable
     // ── PCMReaderCallback — called by Unity audio thread ────────────────────
     // Mirrors Nebula's ManualSpeaker.Read(ary): pulls audio from Interstellar.
 
+    private int _readErrors;
     private void Read(float[] data)
     {
         Interlocked.Increment(ref _readCallbacks);
-        _speaker.Read(data);
+        try { _speaker.Read(data); }
+        catch (Exception)
+        {
+            Array.Clear(data, 0, data.Length);
+            if (Interlocked.Increment(ref _readErrors) == 1)
+                VoiceDiagnostics.DebugWarning("[VC] Android speaker read error; emitting silence");
+        }
     }
 
     // ── Lifecycle ─────────────────────────────────────────────────────────────
@@ -146,10 +153,17 @@ internal sealed class AndroidSampleProviderSpeaker : IDisposable
         VoiceDiagnostics.DebugInfo($"[VC] Android BCL speaker initialised ({SampleRate} Hz, {Channels} ch, managed mixer).");
     }
 
+    private int _readErrors;
     private void Read(float[] data)
     {
         Interlocked.Increment(ref _readCallbacks);
-        _mixer.Read(data);
+        try { _mixer.Read(data); }
+        catch (Exception)
+        {
+            Array.Clear(data, 0, data.Length);
+            if (Interlocked.Increment(ref _readErrors) == 1)
+                VoiceDiagnostics.DebugWarning("[VC] Android BCL speaker read error; emitting silence");
+        }
     }
 
     public void Dispose()

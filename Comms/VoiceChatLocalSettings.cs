@@ -79,6 +79,7 @@ public class VoiceChatLocalSettings
     public ConfigEntry<bool> NoiseSuppressionEnabled { get; }
     public ConfigEntry<bool> EchoCancellationEnabled { get; }
     public ConfigEntry<bool> AutoMicGain { get; }
+    public ConfigEntry<bool> CleanInput { get; }
     public ConfigEntry<bool> StartMuted { get; }
     public ConfigEntry<bool> StartDeafened { get; }
     public ConfigEntry<MicDeviceEnum> MicrophoneDeviceIndex { get; }
@@ -327,6 +328,9 @@ public class VoiceChatLocalSettings
         AutoMicGain = config.Bind("Audio", "AutoMicGain", true,
             new ConfigDescription("Automatically boost quiet microphones toward a consistent speech level before noise suppression and the noise gate."));
 
+        CleanInput = config.Bind("Audio", "CleanInput", false,
+            new ConfigDescription("Clean input (TTS / line-in): transmit continuously and skip the noise gate and noise suppression. Enable only for synthetic or already-clean audio sources; leave off for a normal microphone."));
+
         DebugVoiceStats = config.Bind("Debug", "DebugVoiceStats", false,
             new ConfigDescription("Enable Perfect Comms diagnostic files and debug log output."));
 
@@ -519,6 +523,7 @@ public class VoiceChatLocalSettings
         }
         else if (configEntry == NoiseGateThreshold || configEntry == VadThreshold ||
                  configEntry == NoiseSuppressionEnabled || configEntry == EchoCancellationEnabled || configEntry == AutoMicGain ||
+                 configEntry == CleanInput ||
                  configEntry == SyntheticMicTone ||
                  configEntry == MicCalibrationDiagnostics)
         {

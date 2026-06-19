@@ -111,8 +111,10 @@ public static class MeetingSpeakingIndicatorPatch
         }
 
         _speakingLevels.Clear();
-        foreach (var remote in overlay.RemotePlayers)
+        var remotes = overlay.RemotePlayers;
+        for (int i = 0; i < remotes.Count; i++)
         {
+            var remote = remotes[i];
             if (remote.IsSpeaking && remote.IsAudible)
                 _speakingLevels[remote.PlayerId] = remote.Level;
         }

@@ -28,7 +28,12 @@ internal sealed class BassRecorder : IDisposable
             if (!Bass.RecordInit(device) && Bass.LastError != Errors.Already)
                 return false;
             _stream = Bass.RecordStart(AudioHelpers.ClockRate, 1, BassFlags.Float, _proc);
-            return _stream != 0;
+            if (_stream == 0)
+            {
+                try { Bass.RecordFree(); } catch { }
+                return false;
+            }
+            return true;
         }
     }
 
