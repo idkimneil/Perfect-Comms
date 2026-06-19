@@ -1,6 +1,7 @@
-#if ANDROID
+#if ANDROID || WINDOWS
 using System;
 using System.Threading;
+using Il2CppInterop.Runtime.InteropTypes.Arrays;
 using Interstellar.VoiceChat;
 using UnityEngine;
 
@@ -89,16 +90,20 @@ internal sealed class AndroidSpeaker : IDisposable
     // Mirrors Nebula's ManualSpeaker.Read(ary): pulls audio from Interstellar.
 
     private int _readErrors;
-    private void Read(float[] data)
+    private float[] _scratch = Array.Empty<float>();
+    private void Read(Il2CppStructArray<float> data)
     {
         Interlocked.Increment(ref _readCallbacks);
-        try { _speaker.Read(data); }
+        int n = data.Length;
+        if (_scratch.Length != n) _scratch = new float[n];
+        try { _speaker.Read(_scratch); }
         catch (Exception)
         {
-            Array.Clear(data, 0, data.Length);
+            Array.Clear(_scratch, 0, n);
             if (Interlocked.Increment(ref _readErrors) == 1)
                 VoiceDiagnostics.DebugWarning("[VC] Android speaker read error; emitting silence");
         }
+        for (int i = 0; i < n; i++) data[i] = _scratch[i];
     }
 
     // ── Lifecycle ─────────────────────────────────────────────────────────────
@@ -154,16 +159,20 @@ internal sealed class AndroidSampleProviderSpeaker : IDisposable
     }
 
     private int _readErrors;
-    private void Read(float[] data)
+    private float[] _scratch = Array.Empty<float>();
+    private void Read(Il2CppStructArray<float> data)
     {
         Interlocked.Increment(ref _readCallbacks);
-        try { _mixer.Read(data); }
+        int n = data.Length;
+        if (_scratch.Length != n) _scratch = new float[n];
+        try { _mixer.Read(_scratch); }
         catch (Exception)
         {
-            Array.Clear(data, 0, data.Length);
+            Array.Clear(_scratch, 0, n);
             if (Interlocked.Increment(ref _readErrors) == 1)
                 VoiceDiagnostics.DebugWarning("[VC] Android BCL speaker read error; emitting silence");
         }
+        for (int i = 0; i < n; i++) data[i] = _scratch[i];
     }
 
     public void Dispose()

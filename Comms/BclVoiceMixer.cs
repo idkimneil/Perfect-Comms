@@ -148,6 +148,9 @@ internal sealed class BclVoiceMixer
         }
     }
 
+    private float _masterGain = 1f;
+    public void SetMasterVolume(float volume) => _masterGain = Math.Clamp(volume, 0f, 2f);
+
     public void Remove(int group)
     {
         lock (_sync)
@@ -299,6 +302,11 @@ internal sealed class BclVoiceMixer
                 }
             }
         }
+
+        var masterGain = _masterGain;
+        if (masterGain != 1f)
+            for (var i = 0; i < interleavedStereo.Length; i++)
+                interleavedStereo[i] *= masterGain;
 
         var peak = AudioHelpers.MeasurePeak(interleavedStereo, interleavedStereo.Length);
         var target = AudioHelpers.GetPlaybackMixLimiterGain(peak);

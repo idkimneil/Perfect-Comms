@@ -182,10 +182,11 @@ internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
     private string _openedSpeakerProductName = string.Empty;
     private string _lastSpeakerDeviceName = string.Empty;
 #endif
-#if ANDROID
+#if ANDROID || WINDOWS
     private AndroidMicrophone? _androidMicrophone;
     private AndroidSampleProviderSpeaker? _androidSpeaker;
 #endif
+    private bool _useUnityAudio;
     private IVoiceEncoder _encoder = CreateEncoder();
     private Timer? _syntheticMicTimer;
     private string _lastMicDeviceName = string.Empty;
@@ -475,13 +476,16 @@ internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
     }
     public void ToggleMute() => SetMute(!Mute);
     public void SetLoopBack(bool loopBack) { }
+    private float _masterVolume = 1f;
     public void SetMasterVolume(float volume)
     {
+        _masterVolume = Math.Clamp(volume, 0f, 2f);
+        _voiceMixer?.SetMasterVolume(_masterVolume);
     }
     public void SetMicVolume(float volume)
     {
         _micVolume = Mathf.Clamp(volume, 0f, 2f);
-#if ANDROID
+#if ANDROID || WINDOWS
         _androidMicrophone?.SetVolume(_micVolume);
 #endif
     }
@@ -497,10 +501,14 @@ internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
         var restartCapture = _captureOptions.SyntheticMicToneEnabled != options.SyntheticMicToneEnabled;
         _captureOptions = options;
         _autoMicGain = ReadAutoMicGainSetting();
+        _useUnityAudio = ReadUnityAudioSetting();
         lock (_captureFrameSync)
         {
             _micPreprocessor.SetNoiseSuppressionEnabled(options.NoiseSuppressionEnabled);
-            _micPreprocessor.ConfigureApm(options.EchoCancellationEnabled, _autoMicGain);
+            if (_useUnityAudio)
+                _micPreprocessor.DisableApm();
+            else
+                _micPreprocessor.ConfigureApm(options.EchoCancellationEnabled, _autoMicGain);
         }
 
 #if WINDOWS
@@ -523,6 +531,18 @@ internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
         catch
         {
             return true;
+        }
+    }
+
+    private static bool ReadUnityAudioSetting()
+    {
+        try
+        {
+            return VoiceSettings.Instance?.UnityAudio.Value ?? false;
+        }
+        catch
+        {
+            return false;
         }
     }
 
@@ -564,6 +584,18 @@ internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
 #if WINDOWS
     private void QueueMicrophoneTransition(bool shouldRun, string reason)
     {
+        if (_useUnityAudio)
+        {
+            StopBassCapture("switch-to-unity");
+            _mainThreadActions.Enqueue(() =>
+            {
+                if (shouldRun && !_disposed) StartAndroidMicrophone(reason);
+                else StopAndroidMicrophone(reason);
+            });
+            return;
+        }
+        if (_androidMicrophone != null)
+            _mainThreadActions.Enqueue(() => StopAndroidMicrophone("switch-to-bass"));
         lock (_captureWorkerSync)
         {
             _captureDesiredRunning = shouldRun && !_disposed;
@@ -572,6 +604,19 @@ internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
 
             if (!_captureWorker.IsCompleted) return;
             _captureWorker = Task.Run(ProcessMicrophoneTransitions);
+        }
+    }
+
+    private void StopBassCapture(string reason)
+    {
+        lock (_captureWorkerSync)
+        {
+            if (!_captureDesiredRunning && _captureWorker.IsCompleted) return;
+            _captureDesiredRunning = false;
+            _captureDesiredReason = reason;
+            _captureTransitionVersion++;
+            if (_captureWorker.IsCompleted)
+                _captureWorker = Task.Run(ProcessMicrophoneTransitions);
         }
     }
 
@@ -610,6 +655,11 @@ internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
 
     private void StopMicrophoneWorkerForDispose()
     {
+        if (_useUnityAudio || _androidMicrophone != null)
+        {
+            StopAndroidMicrophone("dispose");
+            return;
+        }
         Task worker;
         lock (_captureWorkerSync)
         {
@@ -770,7 +820,7 @@ internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
 
 #endif
 
-#if ANDROID
+#if ANDROID || WINDOWS
     private void StartAndroidMicrophone(string reason)
     {
         try
@@ -787,6 +837,7 @@ internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
                 _androidMicrophone.DataAvailable += OnAndroidMicrophoneData;
                 _androidMicrophone.SetVolume(_micVolume);
                 _androidMicrophone.Start(_lastMicDeviceName);
+                VoiceDiagnostics.Log("bcl.unity.mic", $"requested=\"{_lastMicDeviceName}\" unityDevices=\"{string.Join("|", AndroidMicrophone.GetDeviceNames())}\"");
             }
 
             _microphoneReady = true;
@@ -865,7 +916,9 @@ internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
                 _btProfileConflict = false;
             _lastSpeakerDeviceName = deviceName ?? string.Empty;
             _speakerRequested = true;
-            SetSpeakerBass(deviceName ?? string.Empty);
+            _useUnityAudio = ReadUnityAudioSetting();
+            if (_useUnityAudio) SetSpeakerUnity();
+            else SetSpeakerBass(deviceName ?? string.Empty);
         }
         catch (Exception ex)
         {
@@ -956,9 +1009,37 @@ internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
         }
     }
 
+    private void SetSpeakerUnity()
+    {
+        _bassOut?.Dispose();
+        _bassOut = null;
+        try
+        {
+            _androidSpeaker?.Dispose();
+            var mixer = _voiceMixer ?? new BclVoiceMixer();
+            _voiceMixer = mixer;
+            mixer.SetMasterVolume(_masterVolume);
+            _androidSpeaker = new AndroidSampleProviderSpeaker(mixer);
+            _speakerReady = _androidSpeaker.IsPlaying;
+            lock (_peerSync)
+                foreach (var peer in _peersBySocket.Values)
+                    peer.SetMixer(mixer);
+            VoiceDiagnostics.Log("bcl.speaker", $"ready={_speakerReady} backend=unity-managed");
+        }
+        catch (Exception ex)
+        {
+            try { _androidSpeaker?.Dispose(); } catch { }
+            _androidSpeaker = null;
+            _speakerReady = false;
+            VoiceDiagnostics.Log("bcl.speaker", $"ready=false backend=unity error=\"{ex.Message}\"");
+        }
+    }
+
     private void SetSpeakerBass(string deviceName)
     {
         BassRuntime.EnsureConfigured();
+        try { _androidSpeaker?.Dispose(); } catch { }
+        _androidSpeaker = null;
 
         var device = ResolveBassOutputDevice(deviceName);
         if (device == BassDeviceNotFound)
@@ -975,6 +1056,7 @@ internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
         _bassOut?.Dispose();
         var mixer = _voiceMixer ?? new BclVoiceMixer();
         _voiceMixer = mixer;
+        mixer.SetMasterVolume(_masterVolume);
         var output = new BassStereoOutput(block =>
         {
             mixer.Read(block);
@@ -1205,6 +1287,7 @@ internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
 #if ANDROID
         _androidMicrophone?.Tick();
 #elif WINDOWS
+        _androidMicrophone?.Tick();
         MaybeReleaseBluetoothMutedMicrophone();
         MaybeFollowDefaultSpeaker();
 #endif
@@ -1344,6 +1427,8 @@ internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
         StopMicrophoneWorkerForDispose();
         try { _bassOut?.Dispose(); } catch { }
         _bassOut = null;
+        try { _androidSpeaker?.Dispose(); } catch { }
+        _androidSpeaker = null;
         _voiceMixer = null;
 #elif ANDROID
         StopAndroidMicrophone("dispose");
@@ -3202,7 +3287,7 @@ internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
         if (!IsSyntheticSource(source))
             TrackCaptureHealthLocked(rawCapturePeak);
 
-        if (captureOptions.NoiseSuppressionEnabled && !IsSyntheticSource(source))
+        if (captureOptions.NoiseSuppressionEnabled && !IsSyntheticSource(source) && !_useUnityAudio)
             _micPreprocessor.TryApplyNoiseSuppression(floatPcm, samples);
 
         var transmitGain = _micPreprocessor.LimitFramePeakForEncode(floatPcm, samples);
@@ -3523,6 +3608,9 @@ internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
             $"micMutedDrops={Volatile.Read(ref _micMutedDrops)} micEncodeFailures={Volatile.Read(ref _micEncodeFailures)} micEncodedFrames={Volatile.Read(ref _micEncodedFrames)} micNoOpenChannelDrops={Volatile.Read(ref _micNoOpenChannelDrops)} audioDecodeFailures={Volatile.Read(ref _audioDecodeFailures)} " +
             $"noiseGate={noiseGateThreshold:0.000000} vadThreshold={vadThreshold:0.000000} gateReason={_lastGateReason} gatePeak={_lastGatePeak:0.000000} gateRms={_lastGateRms:0.000000} gateThreshold={_lastGateThreshold:0.000000} txGain={_lastTransmitGain:0.000} txPeak={_lastTransmitPeak:0.000000} txPeakMax={txPeakMax:0.000000} txRms={txRms:0.000000} txSamples={txSamples} opusBytesAvg={opusAvgBytes:0.0} opusBytesMin={opusMinBytes} opusBytesMax={opusMaxBytes} " +
             $"syntheticTone={_captureOptions.SyntheticMicToneEnabled} noiseSuppression={_captureOptions.NoiseSuppressionEnabled} {rnnoiseSummary} syntheticFrames={Volatile.Read(ref _syntheticFrames)} capture={DescribeCaptureMode()} calibration={_captureOptions.MicCalibrationDiagnostics} sensitivity={_captureOptions.MicSensitivity:0.00} micReady={_microphoneReady} speakerReady={_speakerReady} plp={_adaptedPacketLossPercent} bitrate={_adaptedBitrate} recordDevice={Volatile.Read(ref _lastOpenedRecordDevice)} micDeadInput={Volatile.Read(ref _deadInputDetected)}");
+        if (_useUnityAudio)
+            VoiceDiagnostics.Log("bcl.unity",
+                $"active=true mode={DescribeCaptureMode()} micReady={_microphoneReady} micCallbacks={Volatile.Read(ref _micCallbacks)} micSamples={Volatile.Read(ref _micSamples)} micPeak={micPeak:0.000000} micRms={micRms:0.000000} micSilentCallbacks={micSilentCallbacks} micEncodedFrames={Volatile.Read(ref _micEncodedFrames)} encodedTx={Volatile.Read(ref _encodedTx)} micMutedDrops={Volatile.Read(ref _micMutedDrops)} speakerReady={_speakerReady} speakerPlaying={_androidSpeaker?.IsPlaying} speakerReads={_androidSpeaker?.ReadCallbacks ?? 0}");
         VoiceDiagnostics.Log("bcl.playout", _voiceMixer?.FormatPlayoutDiagnostics() ?? "no-mixer");
         if ((_captureOptions.NoiseSuppressionEnabled || rnnoise.Attempts > 0 || rnnoise.UnavailableFrames > 0)
             && now - _lastRnNoiseStatsLogUtc >= RnNoiseStatsLogInterval)
@@ -3541,7 +3629,7 @@ internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
 #if ANDROID
         return "android-unity-microphone";
 #else
-        return "bass";
+        return _androidMicrophone != null ? "unity-microphone" : "bass";
 #endif
     }
 

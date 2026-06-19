@@ -79,6 +79,7 @@ public class VoiceChatLocalSettings
     public ConfigEntry<bool> NoiseSuppressionEnabled { get; }
     public ConfigEntry<bool> EchoCancellationEnabled { get; }
     public ConfigEntry<bool> AutoMicGain { get; }
+    public ConfigEntry<bool> UnityAudio { get; }
     public ConfigEntry<bool> StartMuted { get; }
     public ConfigEntry<bool> StartDeafened { get; }
     public ConfigEntry<MicDeviceEnum> MicrophoneDeviceIndex { get; }
@@ -141,6 +142,11 @@ public class VoiceChatLocalSettings
 #endif
 
     private bool _correcting;
+
+    private bool _savedNoiseSuppression = true;
+    private bool _savedEchoCancellation = true;
+    private bool _savedAutoMicGain = true;
+    private bool _applyingUnityToggle;
 
     public string MicrophoneDevice
     {
@@ -326,6 +332,9 @@ public class VoiceChatLocalSettings
 
         AutoMicGain = config.Bind("Audio", "AutoMicGain", true,
             new ConfigDescription("Automatically boost quiet microphones toward a consistent speech level before noise suppression and the noise gate."));
+
+        UnityAudio = config.Bind("Audio.Advanced", "UnityAudio", false,
+            new ConfigDescription("Experimental compatibility mode: route microphone capture and speaker playback through Unity's audio instead of BASS. Mainly for running under Wine/CrossOver where the BASS audio stack is unreliable. Rejoin voice after changing. Default off."));
 
         DebugVoiceStats = config.Bind("Debug", "DebugVoiceStats", false,
             new ConfigDescription("Enable Perfect Comms diagnostic files and debug log output."));
@@ -522,7 +531,40 @@ public class VoiceChatLocalSettings
                  configEntry == SyntheticMicTone ||
                  configEntry == MicCalibrationDiagnostics)
         {
+            if (_applyingUnityToggle) return;
             VoiceChatRoom.Current?.RefreshLocalAudioSettings();
+        }
+        else if (configEntry == UnityAudio)
+        {
+            _applyingUnityToggle = true;
+            try
+            {
+                if (UnityAudio.Value)
+                {
+                    _savedNoiseSuppression = NoiseSuppressionEnabled.Value;
+                    _savedEchoCancellation = EchoCancellationEnabled.Value;
+                    _savedAutoMicGain = AutoMicGain.Value;
+                    NoiseSuppressionEnabled.Value = false;
+                    EchoCancellationEnabled.Value = false;
+                    AutoMicGain.Value = false;
+                }
+                else
+                {
+                    NoiseSuppressionEnabled.Value = _savedNoiseSuppression;
+                    EchoCancellationEnabled.Value = _savedEchoCancellation;
+                    AutoMicGain.Value = _savedAutoMicGain;
+                }
+            }
+            finally { _applyingUnityToggle = false; }
+            var room = VoiceChatRoom.Current;
+            if (room != null)
+            {
+                room.RefreshLocalAudioSettings();
+                room.SetMicrophone(MicrophoneDevice);
+#if WINDOWS
+                room.SetSpeaker(SpeakerDevice);
+#endif
+            }
         }
         else if (configEntry == MicrophoneDeviceIndex)
         {

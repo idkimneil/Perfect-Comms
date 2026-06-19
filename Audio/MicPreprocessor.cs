@@ -324,6 +324,15 @@ internal sealed class MicPreprocessor : IDisposable
 #endif
     }
 
+    public void DisableApm()
+    {
+#if WINDOWS
+        _apm?.Dispose();
+        _apm = null;
+        _apmState = "disabled";
+#endif
+    }
+
     public void ResetEchoCancellation()
     {
 #if WINDOWS

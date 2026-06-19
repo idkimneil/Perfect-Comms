@@ -1,4 +1,4 @@
-#if ANDROID
+#if ANDROID || WINDOWS
 using System;
 using Il2CppInterop.Runtime.InteropTypes.Arrays;
 using UnityEngine;
@@ -117,6 +117,9 @@ internal sealed class AndroidMicrophone : IDisposable
     {
         if (_clip == null || count <= 0) return;
 
+        var samples = new Il2CppStructArray<float>(count);
+        _clip.GetData(samples, start);
+
         float[] buf;
         if (ReuseBuffer)
         {
@@ -128,9 +131,7 @@ internal sealed class AndroidMicrophone : IDisposable
             buf = new float[count];
         }
 
-        _clip.GetData(buf, start);
-        if (_volume != 1f)
-            for (int i = 0; i < count; i++) buf[i] *= _volume;
+        for (int i = 0; i < count; i++) buf[i] = samples[i] * _volume;
 
         DataAvailable?.Invoke(buf, count);
     }
