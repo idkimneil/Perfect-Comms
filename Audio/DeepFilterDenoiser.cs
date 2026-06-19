@@ -16,7 +16,7 @@ internal sealed unsafe class DeepFilterDenoiser : INoiseSuppressor
     private const string NativeFileName = "df.dll";
     private static string ResourceName => Environment.Is64BitProcess ? "Lib.df.x64.dll" : "Lib.df.x86.dll";
     private static string ArchitectureLabel => Environment.Is64BitProcess ? "x64" : "x86";
-    private const float AttenLimitDb = 100f; // upper bound on attenuation; the model decides how much to remove
+    private const float AttenLimitDb = 18f; // cap attenuation so the model suppresses noise but never fully nulls speech
 
     private static readonly object LoadLock = new();
     private static NativeApi? _api;

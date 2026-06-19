@@ -335,7 +335,7 @@ internal sealed class InterstellarVoiceBackend : IVoiceBackend
             lock (_micProcessSync)
             {
                 _micPreprocessor.SetNoiseSuppressionEnabled(options.NoiseSuppressionEnabled);
-                _micPreprocessor.SetEchoCancellationEnabled(options.EchoCancellationEnabled);
+                _micPreprocessor.ConfigureApm(false, _autoMicGain);
             }
         }
         catch (Exception ex)
@@ -533,9 +533,12 @@ internal sealed class InterstellarVoiceBackend : IVoiceBackend
         {
             lock (_micProcessSync)
             {
-                _micPreprocessor.ApplyHighPass(floatPcm, samples);
-                _micPreprocessor.ApplyAutoGain(floatPcm, samples, _autoMicGain, out _);
-                if (_captureOptions.NoiseSuppressionEnabled && !_captureOptions.CleanInput)
+                if (!_micPreprocessor.RunApmCapture(floatPcm, samples, System.Array.Empty<float>(), false, 0))
+                {
+                    _micPreprocessor.ApplyHighPass(floatPcm, samples);
+                    _micPreprocessor.ApplyAutoGain(floatPcm, samples, _autoMicGain, out _);
+                }
+                if (_captureOptions.NoiseSuppressionEnabled)
                     _micPreprocessor.TryApplyNoiseSuppression(floatPcm, samples);
             }
         }

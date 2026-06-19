@@ -32,13 +32,13 @@ runtime (Windows, x64 and x86). Their licenses are reproduced or referenced belo
   embedded default model via `DfParams::default()`. The patch is documented in `Libs/df-build.md`.
 - Build recipe: `Libs/df-build.md`.
 
-## speexdsp (acoustic echo cancellation + preprocessor)
+## webrtc-audio-processing (acoustic echo cancellation AEC3 + automatic gain control AGC2 + high-pass filter)
 
-- Files: `Libs/speexdsp.x64.dll`, `Libs/speexdsp.x86.dll`
-- Upstream: https://gitlab.xiph.org/xiph/speexdsp (commit `ed26e53`)
-- License: BSD 3-Clause. Copyright 2002-2008 Xiph.org Foundation and Jean-Marc Valin. Full text in
-  `Libs/speexdsp.COPYING`.
-- Build recipe: `Libs/speexdsp-build.md`.
+- Files: `Libs/webrtc-apm.x64.dll`, `Libs/webrtc-apm.x86.dll`
+- Upstream: WebRTC AudioProcessingModule (Google), via the PulseAudio standalone fork
+  https://gitlab.freedesktop.org/pulseaudio/webrtc-audio-processing (v2.1, WebRTC M131). Prebuilt Windows
+  binaries from the `LSXPrime/webrtc-audio-processing` mirror.
+- License: BSD 3-Clause. Copyright The WebRTC project authors. Full text in `Libs/webrtc-apm.COPYING`.
 
 ## Bundled managed dependencies
 

@@ -500,7 +500,7 @@ internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
         lock (_captureFrameSync)
         {
             _micPreprocessor.SetNoiseSuppressionEnabled(options.NoiseSuppressionEnabled);
-            _micPreprocessor.SetEchoCancellationEnabled(options.EchoCancellationEnabled);
+            _micPreprocessor.ConfigureApm(options.EchoCancellationEnabled, _autoMicGain);
         }
 
 #if WINDOWS
@@ -975,7 +975,11 @@ internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
         _bassOut?.Dispose();
         var mixer = _voiceMixer ?? new BclVoiceMixer();
         _voiceMixer = mixer;
-        var output = new BassStereoOutput(mixer.Read);
+        var output = new BassStereoOutput(block =>
+        {
+            mixer.Read(block);
+            FeedFarEndReference(block);
+        });
         _bassOut = output;
         _farEndReference.Reset();
         lock (_peerSync)
@@ -985,6 +989,23 @@ internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
         _openedSpeakerDeviceNumber = device;
         _openedSpeakerProductName = ManagedBass.Bass.GetDeviceInfo(device, out var di) ? di.Name : string.Empty;
         VoiceDiagnostics.Log("bcl.speaker", $"ready={_speakerReady} device=\"{deviceName}\" bassDevice={device} backend=bass-mixer");
+    }
+
+    private float[] _farEndLeft = Array.Empty<float>();
+    private float[] _farEndRight = Array.Empty<float>();
+
+    private void FeedFarEndReference(float[] interleavedStereo)
+    {
+        if (!_captureOptions.EchoCancellationEnabled) return;
+        int frames = interleavedStereo.Length / 2;
+        if (frames <= 0) return;
+        if (_farEndLeft.Length < frames) { _farEndLeft = new float[frames]; _farEndRight = new float[frames]; }
+        for (int i = 0; i < frames; i++)
+        {
+            _farEndLeft[i] = interleavedStereo[2 * i];
+            _farEndRight[i] = interleavedStereo[2 * i + 1];
+        }
+        _farEndReference.WriteStereoDownmix(_farEndLeft, frames, _farEndRight, frames, frames);
     }
 
     private void MaybeFollowDefaultSpeaker()
@@ -3151,16 +3172,25 @@ internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
         // wholesale from the settings thread, so re-reading the field could mix old/new fields mid-frame.
         var captureOptions = _captureOptions;
 
-        if (!IsSyntheticSource(source))
-            _micPreprocessor.ApplyHighPass(floatPcm, samples);
-
-        // Acoustic echo cancellation: subtract the played far-end signal that bleeds back into the mic, before
-        // AGC so the echo path the adaptive filter models stays linear. Skips when the reference FIFO is short.
-        if (!IsSyntheticSource(source) && _farEndReference.TryReadAligned(_referenceFrame, samples))
-            _micPreprocessor.ApplyEchoCancellation(floatPcm, _referenceFrame, samples);
-
         var rawCapturePeak = AudioHelpers.MeasurePeak(floatPcm, samples);
-        var agcGain = _micPreprocessor.ApplyAutoGain(floatPcm, samples, _autoMicGain && !IsSyntheticSource(source), out var preSuppressionPeak);
+
+        bool hasReference = !IsSyntheticSource(source) && _micPreprocessor.ApmReady
+            && _farEndReference.TryReadAligned(_referenceFrame, samples);
+        bool apmRan = !IsSyntheticSource(source)
+            && _micPreprocessor.RunApmCapture(floatPcm, samples, _referenceFrame, hasReference, BclPlaybackLatencyMs);
+
+        float agcGain = 1f;
+        float preSuppressionPeak;
+        if (apmRan)
+        {
+            preSuppressionPeak = AudioHelpers.MeasurePeak(floatPcm, samples);
+        }
+        else
+        {
+            if (!IsSyntheticSource(source))
+                _micPreprocessor.ApplyHighPass(floatPcm, samples);
+            agcGain = _micPreprocessor.ApplyAutoGain(floatPcm, samples, _autoMicGain && !IsSyntheticSource(source), out preSuppressionPeak);
+        }
 
         var preSuppressionGuardGain = AudioHelpers.GetCaptureEncodeLimiterGain(preSuppressionPeak);
         if (preSuppressionGuardGain < 1f)
@@ -3172,7 +3202,7 @@ internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
         if (!IsSyntheticSource(source))
             TrackCaptureHealthLocked(rawCapturePeak);
 
-        if (captureOptions.NoiseSuppressionEnabled && !IsSyntheticSource(source) && !captureOptions.CleanInput)
+        if (captureOptions.NoiseSuppressionEnabled && !IsSyntheticSource(source))
             _micPreprocessor.TryApplyNoiseSuppression(floatPcm, samples);
 
         var transmitGain = _micPreprocessor.LimitFramePeakForEncode(floatPcm, samples);
@@ -3213,7 +3243,7 @@ internal sealed class BetterCrewLinkVoiceBackend : IVoiceBackend
             _micZeroCrossingsSinceStats += zeroCrossings;
         }
 
-        var decision = _micPreprocessor.PrepareFrameForEncode(floatPcm, samples, _noiseGateThreshold, _vadThreshold, preSuppressionPeak, captureOptions.CleanInput && !IsSyntheticSource(source));
+        var decision = _micPreprocessor.PrepareFrameForEncode(floatPcm, samples, _noiseGateThreshold, _vadThreshold, preSuppressionPeak);
         _lastGateReason = decision.Reason;
         _lastGatePeak = decision.Peak;
         _lastGateRms = decision.Rms;

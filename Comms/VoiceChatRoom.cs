@@ -222,7 +222,6 @@ public class VoiceChatRoom
             settings?.MicCalibrationDiagnostics.Value ?? false,
             settings?.NoiseSuppressionEnabled.Value ?? false,
             settings?.EchoCancellationEnabled.Value ?? true,
-            settings?.CleanInput.Value ?? false,
             settings?.MicSensitivity.Value ?? 1f);
 
     public void SetMute(bool mute)

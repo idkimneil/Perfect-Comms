@@ -27,7 +27,6 @@ internal readonly record struct NoiseSuppressionDiagnostics(
 
 internal sealed class MicPreprocessor : IDisposable
 {
-    private const int HangoverFrames = 8;
     private const float MinimumTransmitGate = 0.0005f;
     private const float AgcTargetPeak = 0.30f;
     private const float AgcMaxGain = 16f;
@@ -41,7 +40,6 @@ internal sealed class MicPreprocessor : IDisposable
     public float AutoGainSeedFloor { get; set; } = 0.003f;
 
     private readonly object _noiseSuppressionStatsLock = new();
-    private int _hangoverFramesRemaining;
     private float _agcGain = 1f;
     private float _agcLastAppliedGain = 1f;
     private float _agcRecentSpeechPeak;
@@ -50,11 +48,12 @@ internal sealed class MicPreprocessor : IDisposable
     private bool _disposed;
     private bool _noiseSuppressionEnabled = true;
     private INoiseSuppressor? _noiseSuppressor;
-    private SpeexEchoCanceller? _echoCanceller;
-    private bool _echoCancellationEnabled = true;
-    private bool _echoCancellationUnavailable;
-    private string _echoCancellationState = "enabled-waiting-for-audio";
-    private string _echoCancellationLastError = "none";
+#if WINDOWS
+    private WebRtcApm? _apm;
+    private string _apmState = "disabled";
+    private bool _apmEcho = true;
+    private bool _apmGainControl = true;
+#endif
     private string _noiseSuppressionState = "disabled";
     private string _noiseSuppressionLastError = "none";
     private string _noiseSuppressionNativePath = string.Empty;
@@ -71,13 +70,12 @@ internal sealed class MicPreprocessor : IDisposable
 
     public void Reset(bool preserveAutoGain = false)
     {
-        _hangoverFramesRemaining = 0;
         if (!preserveAutoGain)
             ResetAutoGain();
         _hpfLastInput = 0f;
         _hpfLastOutput = 0f;
         _noiseSuppressor?.Reset();
-        _echoCanceller?.Reset();
+        ResetEchoCancellation();
     }
 
     public void ResetAutoGain()
@@ -286,71 +284,84 @@ internal sealed class MicPreprocessor : IDisposable
         _disposed = true;
         _noiseSuppressor?.Dispose();
         _noiseSuppressor = null;
-        _echoCanceller?.Dispose();
-        _echoCanceller = null;
+#if WINDOWS
+        _apm?.Dispose();
+        _apm = null;
+#endif
     }
 
-    public void SetEchoCancellationEnabled(bool enabled)
+    public bool ApmReady =>
+#if WINDOWS
+        _apm != null;
+#else
+        false;
+#endif
+
+    // (Re)configure the WebRTC AudioProcessingModule used for capture: AEC3 echo cancellation + AGC2 gain,
+    // with the high-pass filter always on. Windows only; on other platforms the capture path falls back to
+    // the managed high-pass + auto-gain. A failed native load leaves the APM null (graceful fallback).
+    public void ConfigureApm(bool echoCancel, bool gainControl2)
     {
-        _echoCancellationEnabled = enabled;
-        if (!enabled)
+#if WINDOWS
+        _apmEcho = echoCancel;
+        _apmGainControl = gainControl2;
+        if (_disposed) return;
+        _apm?.Dispose();
+        _apm = null;
+        if (WebRtcApm.TryCreate(echoCancel, gainControl2, true, out var apm, out var error))
         {
-            _echoCanceller?.Dispose();
-            _echoCanceller = null;
-            SetEchoCancellationState("disabled", "none");
+            _apm = apm;
+            _apmState = "ready";
         }
+        else
+        {
+            _apmState = $"unavailable:{error}";
+        }
+        VoiceDiagnostics.Log("bcl.apm", $"state={_apmState} echo={echoCancel} agc2={gainControl2}");
+#else
+        _ = echoCancel;
+        _ = gainControl2;
+#endif
     }
 
-    public void ResetEchoCancellation() => _echoCanceller?.Reset();
-
-    // Cancels far-end echo (the played reference bleeding into the mic) in place, before AGC so the echo path
-    // the adaptive filter models stays linear. Lazily creates the native canceller on the first frame and
-    // stops retrying once the native library is confirmed unavailable, so a missing DLL is a silent no-op.
-    public bool ApplyEchoCancellation(float[] mic, float[] reference, int sampleCount)
+    public void ResetEchoCancellation()
     {
-        if (_disposed || !_echoCancellationEnabled) return false;
-        var count = Math.Min(sampleCount, Math.Min(mic.Length, reference.Length));
-        if (count <= 0) return false;
-
-        if (_echoCanceller == null)
-        {
-            if (_echoCancellationUnavailable) return false;
-            if (!SpeexEchoCanceller.TryCreate(AudioHelpers.FrameSize, out var canceller, out var error))
-            {
-                _echoCancellationUnavailable = true;
-                SetEchoCancellationState("unavailable", error);
-                return false;
-            }
-
-            _echoCanceller = canceller;
-            SetEchoCancellationState("ready", "none");
-        }
-
-        var active = _echoCanceller;
-        if (active == null) return false;
-
-        try
-        {
-            return active.TryCancelInPlace(mic, reference, count);
-        }
-        catch (Exception ex)
-        {
-            SetEchoCancellationState("process-error", ex.Message);
-            active.Dispose();
-            _echoCanceller = null;
-            _echoCancellationUnavailable = true;
-            return false;
-        }
+#if WINDOWS
+        if (_apm != null) ConfigureApm(_apmEcho, _apmGainControl);
+#endif
     }
 
-    private void SetEchoCancellationState(string state, string error)
+    // Capture chain on Windows: feed the far-end reference (if available) then run AEC3 + HPF + AGC2 in place.
+    // Returns false on non-Windows or when the native APM is unavailable, so the caller applies the managed
+    // high-pass + auto-gain fallback instead.
+    public bool RunApmCapture(float[] pcm, int sampleCount, float[] reference, bool hasReference, int delayMs)
     {
-        var safeError = string.IsNullOrWhiteSpace(error) ? "none" : SanitizeLogValue(error);
-        if (_echoCancellationState == state && _echoCancellationLastError == safeError) return;
-        _echoCancellationState = state;
-        _echoCancellationLastError = safeError;
-        VoiceDiagnostics.Log("bcl.aec", $"state={state} error=\"{safeError}\" nativePath=\"{SanitizeLogValue(_echoCanceller?.NativePath)}\"");
+#if WINDOWS
+        var apm = _apm;
+        if (_disposed || apm == null) return false;
+        if (hasReference)
+        {
+            apm.SetStreamDelayMs(delayMs);
+            apm.ProcessReverse(reference, sampleCount);
+        }
+        apm.ProcessCapture(pcm, sampleCount);
+        return true;
+#else
+        _ = pcm;
+        _ = sampleCount;
+        _ = reference;
+        _ = hasReference;
+        _ = delayMs;
+        return false;
+#endif
     }
+
+    public string ApmState =>
+#if WINDOWS
+        _apmState;
+#else
+        "n/a";
+#endif
 
     public float LimitFramePeakForEncode(float[] pcm, int sampleCount)
     {
@@ -389,8 +400,7 @@ internal sealed class MicPreprocessor : IDisposable
         int sampleCount,
         float manualGateThreshold,
         float vadThreshold,
-        float preSuppressionPeak,
-        bool cleanInput = false)
+        float preSuppressionPeak)
     {
         int count = Math.Min(sampleCount, pcm.Length);
         if (count <= 0)
@@ -411,24 +421,7 @@ internal sealed class MicPreprocessor : IDisposable
 
         float rms = (float)Math.Sqrt(sumSquares / count);
         float threshold = Math.Max(MinimumTransmitGate, manualGateThreshold);
-        if (cleanInput)
-        {
-            _hangoverFramesRemaining = HangoverFrames;
-            return new MicFrameDecision(true, peak, rms, threshold, "clean-bypass");
-        }
-        if (peak >= threshold)
-        {
-            _hangoverFramesRemaining = HangoverFrames;
-            return new MicFrameDecision(true, peak, rms, threshold, "voice");
-        }
-
-        if (_hangoverFramesRemaining > 0)
-        {
-            _hangoverFramesRemaining--;
-            return new MicFrameDecision(true, peak, rms, threshold, "hangover");
-        }
-
-        return new MicFrameDecision(false, peak, rms, threshold, "below-threshold");
+        return new MicFrameDecision(true, peak, rms, threshold, peak >= threshold ? "voice" : "silence");
     }
 
     private void TrackNoiseSuppressionFrame(
