@@ -1,5 +1,7 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
+using System.Reflection;
 using Il2CppInterop.Runtime.Injection;
 using TMPro;
 using UnityEngine;
@@ -29,35 +31,39 @@ internal sealed class VoiceUiDriver : MonoBehaviour
 
 internal static class VoiceUiKit
 {
-    public static readonly Color32 Accent       = new(34, 211, 238, 255);
-    public static readonly Color32 AccentSoft    = new(34, 211, 238, 90);
-    public static readonly Color32 AccentFaint   = new(34, 211, 238, 28);
-    public static readonly Color32 AccentGlow     = new(34, 211, 238, 64);
-    public static readonly Color32 PanelOuter     = new(12, 15, 20, 235);
-    public static readonly Color32 PanelInner     = new(20, 25, 33, 235);
-    public static readonly Color32 PanelTop        = new(31, 39, 51, 240);
-    public static readonly Color32 PanelBottom     = new(15, 19, 26, 240);
-    public static readonly Color32 PanelShadow     = new(0, 0, 0, 170);
-    public static readonly Color32 RailSurface    = new(9, 11, 15, 235);
-    public static readonly Color32 HeaderSurface  = new(16, 20, 27, 245);
-    public static readonly Color32 HeaderTop       = new(26, 33, 44, 250);
-    public static readonly Color32 HeaderBottom    = new(14, 18, 25, 250);
+    public static readonly Color32 Accent       = new(74, 127, 121, 255);
+    public static readonly Color32 AccentSoft    = new(74, 127, 121, 90);
+    public static readonly Color32 AccentFaint   = new(74, 127, 121, 28);
+    public static readonly Color32 AccentGlow     = new(74, 127, 121, 0);
+    public static readonly Color32 PanelOuter     = new(24, 24, 26, 240);
+    public static readonly Color32 PanelInner     = new(30, 31, 32, 240);
+    public static readonly Color32 PanelTop        = new(40, 41, 42, 245);
+    public static readonly Color32 PanelBottom     = new(24, 24, 26, 245);
+    public static readonly Color32 PanelShadow     = new(0, 0, 0, 90);
+    public static readonly Color32 RailSurface    = new(0, 0, 0, 0);
+    public static readonly Color32 HeaderSurface  = new(24, 24, 26, 250);
+    public static readonly Color32 HeaderTop       = new(46, 47, 48, 250);
+    public static readonly Color32 HeaderBottom    = new(24, 24, 26, 250);
     public static readonly Color32 TopHighlight    = new(150, 170, 195, 32);
-    public static readonly Color32 Divider         = new(120, 138, 160, 26);
-    public static readonly Color32 TextPrimary     = new(228, 235, 245, 255);
-    public static readonly Color32 TextBright      = new(244, 249, 255, 255);
-    public static readonly Color32 TextMuted       = new(140, 156, 178, 255);
-    public static readonly Color32 TextFaint       = new(96, 110, 130, 255);
-    public static readonly Color32 TrackBg         = new(38, 46, 60, 255);
-    public static readonly Color32 ControlBg       = new(28, 34, 44, 255);
-    public static readonly Color32 ControlHover    = new(44, 53, 67, 255);
+    public static readonly Color32 Divider         = new(150, 150, 150, 40);
+    public static readonly Color32 TextPrimary     = new(255, 255, 255, 255);
+    public static readonly Color32 TextBright      = new(255, 255, 255, 255);
+    public static readonly Color32 TextMuted       = new(190, 190, 190, 255);
+    public static readonly Color32 TextFaint       = new(140, 140, 140, 255);
+    public static readonly Color32 TrackBg         = new(112, 112, 112, 255);
+    public static readonly Color32 ControlBg       = new(61, 64, 64, 255);
+    public static readonly Color32 ControlHover    = new(82, 86, 86, 255);
     public static readonly Color32 RowHover        = new(255, 255, 255, 12);
-    public static readonly Color32 KnobOff         = new(150, 162, 180, 255);
-    public static readonly Color32 ToggleOffTrack  = new(46, 54, 68, 255);
+    public static readonly Color32 KnobOff         = new(235, 235, 235, 255);
+    public static readonly Color32 ToggleOffTrack  = new(112, 112, 112, 255);
     public static readonly Color32 CloseHover      = new(230, 88, 96, 255);
     public static readonly Color32 Danger          = new(230, 88, 96, 255);
     public static readonly Color32 DangerDim       = new(70, 34, 38, 255);
     public static readonly Color32 Clear           = new(0, 0, 0, 0);
+    public static readonly Color32 PillSelected    = new(36, 62, 60, 255);
+    public static readonly Color32 CardIdle        = new(205, 205, 205, 255);
+    public static readonly Color32 CardHover       = new(255, 255, 255, 255);
+    public static readonly Color32 CardOff         = new(120, 120, 120, 255);
 
     private static readonly Color32 LevelMeterGreen  = new(77, 217, 107, 240);
     private static readonly Color32 LevelMeterYellow = new(242, 214, 64, 240);
@@ -70,6 +76,9 @@ internal static class VoiceUiKit
     private static Sprite? _glow;
     private static Sprite? _gradPanel;
     private static Sprite? _gradHeader;
+    private static Sprite? _frame;
+    private static Sprite? _card;
+    private static Sprite? _closeSprite;
     private static TMP_FontAsset? _font;
     private static GameObject? _canvasRoot;
     private static Canvas? _canvas;
@@ -226,7 +235,7 @@ internal static class VoiceUiKit
         var background = backgroundRt.gameObject.AddComponent<Image>();
         background.sprite = Rounded();
         background.type = Image.Type.Sliced;
-        background.color = new Color32(18, 23, 31, 252);
+        background.color = new Color32(24, 24, 26, 252);
         background.raycastTarget = false;
 
         var accent = Panel("TooltipAccent", _tooltipRoot, Accent, true);
@@ -324,7 +333,7 @@ internal static class VoiceUiKit
         if (!soft && _rounded != null) return _rounded;
 
         const int s = 64;
-        int rad = soft ? 32 : 16;
+        int rad = soft ? 32 : 14;
         var tex = new Texture2D(s, s, TextureFormat.RGBA32, false) { hideFlags = HideFlags.HideAndDontSave };
         for (int y = 0; y < s; y++)
         for (int x = 0; x < s; x++)
@@ -403,6 +412,65 @@ internal static class VoiceUiKit
         return sprite;
     }
 
+    private static Sprite? LoadSlicedSprite(string resource, float border)
+    {
+        try
+        {
+            using var stream = Assembly.GetExecutingAssembly().GetManifestResourceStream(resource);
+            if (stream == null) return null;
+            using var ms = new MemoryStream();
+            stream.CopyTo(ms);
+            var tex = new Texture2D(2, 2, TextureFormat.RGBA32, false)
+            {
+                hideFlags = HideFlags.HideAndDontSave,
+                wrapMode = TextureWrapMode.Clamp,
+                filterMode = FilterMode.Bilinear,
+            };
+            if (!tex.LoadImage(ms.ToArray(), false)) return null;
+            var sprite = Sprite.Create(tex, new Rect(0, 0, tex.width, tex.height), new Vector2(0.5f, 0.5f), 100f, 0,
+                SpriteMeshType.FullRect, new Vector4(border, border, border, border));
+            sprite.hideFlags |= HideFlags.HideAndDontSave;
+            return sprite;
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    public static Sprite PanelFrame() =>
+        _frame ??= LoadSlicedSprite("VoiceChatPlugin.Resources.Panel.png", 48f) ?? Rounded();
+
+    public static Sprite CardFrame() =>
+        _card ??= LoadSlicedSprite("VoiceChatPlugin.Resources.Card.png", 26f) ?? Rounded();
+
+    public static Sprite? GameCloseSprite()
+    {
+        if (_closeSprite != null) return _closeSprite;
+        foreach (var menu in Object.FindObjectsOfType<OptionsMenuBehaviour>(true))
+        {
+            if (menu == null) continue;
+            foreach (var button in menu.GetComponentsInChildren<PassiveButton>(true))
+            {
+                foreach (var renderer in button.GetComponentsInChildren<SpriteRenderer>(true))
+                {
+                    if (renderer == null || renderer.sprite == null) continue;
+                    var t = renderer.transform;
+                    if (IsCloseName(t.name) || (t.parent != null && (IsCloseName(t.parent.name) ||
+                        (t.parent.parent != null && IsCloseName(t.parent.parent.name)))))
+                    {
+                        _closeSprite = renderer.sprite;
+                        return _closeSprite;
+                    }
+                }
+            }
+        }
+        return null;
+    }
+
+    private static bool IsCloseName(string n) =>
+        n != null && n.IndexOf("close", StringComparison.OrdinalIgnoreCase) >= 0;
+
     public static Sprite PanelGradient() => Gradient(PanelTop, PanelBottom, ref _gradPanel);
     public static Sprite HeaderGradient() => Gradient(HeaderTop, HeaderBottom, ref _gradHeader);
 
@@ -420,6 +488,18 @@ internal static class VoiceUiKit
     public static TMP_FontAsset? GameFont()
     {
         if (_font != null) return _font;
+        if (DisconnectPopup.Instance != null && DisconnectPopup.Instance._textArea != null &&
+            DisconnectPopup.Instance._textArea.font != null)
+        {
+            _font = DisconnectPopup.Instance._textArea.font;
+            return _font;
+        }
+        if (HudManager.InstanceExists && HudManager.Instance.TaskPanel != null &&
+            HudManager.Instance.TaskPanel.taskText != null && HudManager.Instance.TaskPanel.taskText.font != null)
+        {
+            _font = HudManager.Instance.TaskPanel.taskText.font;
+            return _font;
+        }
         if (HudManager.InstanceExists)
         {
             foreach (var t in HudManager.Instance.GetComponentsInChildren<TextMeshPro>(true))
@@ -489,7 +569,7 @@ internal static class VoiceUiKit
         rt.anchoredPosition = new Vector2(0f, y);
 
         var label = Text("SectionLabel", rt, content, 15f, TextMuted, TextAlignmentOptions.Left, FontStyles.Bold);
-        label.characterSpacing = 4f;
+        label.characterSpacing = 0f;
         label.rectTransform.Anchor(new Vector2(0f, 0f), new Vector2(1f, 1f), new Vector2(0f, 0.5f));
         label.rectTransform.offsetMin = new Vector2(Row.EdgePad, 0f);
         label.rectTransform.offsetMax = new Vector2(-Row.EdgePad, -2f);
@@ -549,6 +629,7 @@ internal static class VoiceUiKit
         private readonly Action _onClose;
         private readonly bool _guided;
         private readonly Color32 _closeRestColor;
+        private readonly bool _closeGame;
         private bool _dragging;
         private Vector2 _dragOffset;
         private Vector2 _userPosition;
@@ -602,21 +683,14 @@ internal static class VoiceUiKit
                 ? new Vector2(26f, 22f)
                 : new Vector2(46f, 38f);
 
-            var rimGlow = GlowImage("RimGlow", RootRect,
-                guided ? new Color32(34, 211, 238, 18) : AccentGlow);
-            rimGlow.rectTransform.Anchor(Vector2.zero, Vector2.one, new Vector2(0.5f, 0.5f));
-            float rimInset = guided ? 10f : 22f;
-            rimGlow.rectTransform.offsetMin = new Vector2(-rimInset, -rimInset);
-            rimGlow.rectTransform.offsetMax = new Vector2(rimInset, rimInset);
-
             var surface = Rect("Surface", RootRect);
             surface.Anchor(Vector2.zero, Vector2.one, new Vector2(0.5f, 0.5f));
             surface.offsetMin = Vector2.zero;
             surface.offsetMax = Vector2.zero;
             var surfaceImg = surface.gameObject.AddComponent<Image>();
-            surfaceImg.sprite = PanelGradient();
+            surfaceImg.sprite = PanelFrame();
             surfaceImg.type = Image.Type.Sliced;
-            surfaceImg.color = Color.white;
+            surfaceImg.color = new Color(0.68f, 0.68f, 0.68f, 1f);
             surfaceImg.raycastTarget = false;
 
             const float headerH = 76f;
@@ -625,8 +699,8 @@ internal static class VoiceUiKit
             HeaderRect.sizeDelta = new Vector2(0f, headerH);
             HeaderRect.anchoredPosition = Vector2.zero;
             var headerBg = HeaderRect.gameObject.AddComponent<Image>();
-            headerBg.sprite = guided ? Solid(Color.white) : HeaderGradient();
-            headerBg.type = guided ? Image.Type.Simple : Image.Type.Sliced;
+            headerBg.sprite = Solid(guided ? Color.white : Clear);
+            headerBg.type = Image.Type.Simple;
             headerBg.color = guided ? new Color32(16, 20, 27, 255) : Color.white;
             headerBg.raycastTarget = false;
 
@@ -638,7 +712,7 @@ internal static class VoiceUiKit
             float titleSize = guided ? 30f : 32f;
             var titleTmp = Text("Title", HeaderRect, title, titleSize, TextBright,
                 TextAlignmentOptions.Left, FontStyles.Bold);
-            titleTmp.characterSpacing = guided ? 1.5f : 6f;
+            titleTmp.characterSpacing = 0f;
             titleTmp.overflowMode = TextOverflowModes.Ellipsis;
             if (guided)
             {
@@ -661,6 +735,20 @@ internal static class VoiceUiKit
             _closeImg.raycastTarget = false;
             _closeBar1 = CloseBar(_closeRt, 45f);
             _closeBar2 = CloseBar(_closeRt, -45f);
+            var gameClose = GameCloseSprite();
+            if (gameClose != null)
+            {
+                _closeGame = true;
+                _closeImg.sprite = gameClose;
+                _closeImg.type = Image.Type.Simple;
+                _closeImg.preserveAspect = true;
+                _closeImg.color = Color.white;
+                _closeBar1.gameObject.SetActive(false);
+                _closeBar2.gameObject.SetActive(false);
+                _closeRt.Anchor(new Vector2(0f, 1f), new Vector2(0f, 1f), new Vector2(0.5f, 0.5f));
+                _closeRt.sizeDelta = new Vector2(64f, 64f);
+                _closeRt.anchoredPosition = new Vector2(-14f, -34f);
+            }
 
             const float pad = 20f;
             const float clipPad = 8f;
@@ -731,10 +819,17 @@ internal static class VoiceUiKit
         public void TickHeader()
         {
             bool overClose = Contains(_closeRt);
-            _closeImg.color = Lerp(_closeImg.color, overClose ? CloseHover : _closeRestColor, 0.3f);
-            var barColor = Lerp(_closeBar1.color, overClose ? TextBright : TextMuted, 0.3f);
-            _closeBar1.color = barColor;
-            _closeBar2.color = barColor;
+            if (_closeGame)
+            {
+                _closeImg.color = Lerp(_closeImg.color, overClose ? new Color32(217, 217, 217, 255) : new Color32(255, 255, 255, 255), 0.3f);
+            }
+            else
+            {
+                _closeImg.color = Lerp(_closeImg.color, overClose ? CloseHover : _closeRestColor, 0.3f);
+                var barColor = Lerp(_closeBar1.color, overClose ? TextBright : TextMuted, 0.3f);
+                _closeBar1.color = barColor;
+                _closeBar2.color = barColor;
+            }
             _closeScale = Mathf.Lerp(_closeScale, overClose ? 1.14f : 1f, 0.3f);
             _closeRt.localScale = new Vector3(_closeScale, _closeScale, 1f);
 
@@ -801,19 +896,14 @@ internal static class VoiceUiKit
             const float top = -22f;
             const float sectionGap = 30f;
 
-            var hiGlow = GlowImage("RailGlow", railRoot, AccentGlow);
             _highlight = Rect("RailHighlight", railRoot);
             _highlight.Anchor(new Vector2(0f, 1f), new Vector2(1f, 1f), new Vector2(0.5f, 1f));
             _highlight.sizeDelta = new Vector2(-16f, ItemH);
             var hiImg = _highlight.gameObject.AddComponent<Image>();
             hiImg.sprite = Rounded();
             hiImg.type = Image.Type.Sliced;
-            hiImg.color = AccentFaint;
+            hiImg.color = Clear;
             hiImg.raycastTarget = false;
-            hiGlow.rectTransform.SetParent(_highlight, false);
-            hiGlow.rectTransform.Anchor(Vector2.zero, Vector2.one, new Vector2(0.5f, 0.5f));
-            hiGlow.rectTransform.offsetMin = new Vector2(-6f, -6f);
-            hiGlow.rectTransform.offsetMax = new Vector2(6f, 6f);
 
             _hiBar = Rect("RailBar", _highlight);
             _hiBar.Anchor(new Vector2(0f, 0.5f), new Vector2(0f, 0.5f), new Vector2(0f, 0.5f));
@@ -822,7 +912,7 @@ internal static class VoiceUiKit
             var barImg = _hiBar.gameObject.AddComponent<Image>();
             barImg.sprite = Rounded(true);
             barImg.type = Image.Type.Sliced;
-            barImg.color = Accent;
+            barImg.color = Clear;
             barImg.raycastTarget = false;
 
             float y = top;
@@ -847,11 +937,11 @@ internal static class VoiceUiKit
                 var hover = rt.gameObject.AddComponent<Image>();
                 hover.sprite = Rounded();
                 hover.type = Image.Type.Sliced;
-                hover.color = Clear;
+                hover.color = ControlBg;
                 hover.raycastTarget = false;
 
-                var label = Text("Label", rt, labels[i], 19f, TextMuted, TextAlignmentOptions.Left, FontStyles.Bold);
-                label.characterSpacing = 3f;
+                var label = Text("Label", rt, labels[i], 20f, TextPrimary, TextAlignmentOptions.Left, FontStyles.Bold);
+                label.characterSpacing = 0f;
                 label.rectTransform.Anchor(new Vector2(0f, 0.5f), new Vector2(1f, 0.5f), new Vector2(0f, 0.5f));
                 label.rectTransform.sizeDelta = new Vector2(-32f, RowH);
                 label.rectTransform.anchoredPosition = new Vector2(22f, 0f);
@@ -872,8 +962,8 @@ internal static class VoiceUiKit
                 bool sel = i == _selected;
                 var it = _items[i];
                 bool hover = !sel && Contains(it.Root);
-                it.Hover.color = Lerp(it.Hover.color, hover ? RowHover : Clear, 0.25f);
-                it.Label.color = Lerp(it.Label.color, sel ? Accent : (hover ? TextPrimary : TextMuted), 0.25f);
+                it.Hover.color = Lerp(it.Hover.color, sel ? PillSelected : (hover ? ControlHover : ControlBg), 0.25f);
+                it.Label.color = Lerp(it.Label.color, TextBright, 0.25f);
                 if (hover && Input.GetMouseButtonDown(0)) Select(i);
             }
 
@@ -896,7 +986,7 @@ internal static class VoiceUiKit
         private void Apply()
         {
             for (int i = 0; i < _items.Count; i++)
-                _items[i].Label.color = i == _selected ? Accent : TextMuted;
+                _items[i].Label.color = TextBright;
         }
 
         private static void BuildSection(RectTransform railRoot, string title, float y)
@@ -910,8 +1000,8 @@ internal static class VoiceUiKit
             divImg.color = Divider;
             divImg.raycastTarget = false;
 
-            var label = Text("RailSectionLabel", railRoot, title, 13f, TextFaint, TextAlignmentOptions.Left, FontStyles.Bold);
-            label.characterSpacing = 4f;
+            var label = Text("RailSectionLabel", railRoot, title, 14f, TextMuted, TextAlignmentOptions.Left, FontStyles.Bold);
+            label.characterSpacing = 0f;
             label.rectTransform.Anchor(new Vector2(0f, 1f), new Vector2(1f, 1f), new Vector2(0.5f, 1f));
             label.rectTransform.sizeDelta = new Vector2(-44f, 20f);
             label.rectTransform.anchoredPosition = new Vector2(22f, y - 4f);
@@ -1103,9 +1193,10 @@ internal static class VoiceUiKit
             _buttonGlow.rectTransform.offsetMax = new Vector2(10f, 10f);
 
             _button = _buttonRt.gameObject.AddComponent<Image>();
-            _button.sprite = Rounded();
+            _button.sprite = CardFrame();
             _button.type = Image.Type.Sliced;
-            _button.color = ControlBg;
+            _button.pixelsPerUnitMultiplier = 2.6f;
+            _button.color = CardIdle;
             _button.raycastTarget = false;
 
             _buttonLabel = Text("ActionButtonLabel", _buttonRt, buttonText, 17f,
@@ -1137,7 +1228,7 @@ internal static class VoiceUiKit
 
             _button.color = Lerp(
                 _button.color,
-                !enabled ? ToggleOffTrack : (over ? ControlHover : ControlBg),
+                !enabled ? CardOff : (over ? CardHover : CardIdle),
                 0.25f);
             _buttonLabel.color = Lerp(
                 _buttonLabel.color,
