@@ -1,8 +1,11 @@
 using System;
+using System.Linq;
 using System.Net.Http;
+using System.Runtime.InteropServices;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Threading.Tasks;
+using VoiceChatPlugin.VoiceChat;
 
 namespace VoiceChatPlugin;
 
@@ -20,6 +23,13 @@ internal sealed class GitHubReleaseInfo
 {
     [JsonPropertyName("tag_name")] public string TagName { get; set; } = "";
     [JsonPropertyName("html_url")] public string HtmlUrl { get; set; } = "";
+    [JsonPropertyName("assets")] public GitHubReleaseAsset[]? Assets { get; set; } = Array.Empty<GitHubReleaseAsset>();
+}
+
+internal sealed class GitHubReleaseAsset
+{
+    [JsonPropertyName("name")] public string Name { get; set; } = "";
+    [JsonPropertyName("browser_download_url")] public string BrowserDownloadUrl { get; set; } = "";
 }
 
 internal static class PerfectCommsUpdateClient
@@ -70,23 +80,75 @@ internal static class PerfectCommsUpdateClient
         return url + separator + "current=" + Uri.EscapeDataString(VoiceChatPluginMain.Version);
     }
 
-    private static PerfectCommsUpdateInfo? ParseUpdateInfo(string text)
+    internal static PerfectCommsUpdateInfo? ParseUpdateInfo(string text)
+        => ParseUpdateInfo(text, CurrentTargetOs(), RuntimeInformation.ProcessArchitecture);
+
+    internal static PerfectCommsUpdateInfo? ParseUpdateInfo(
+        string text,
+        string? targetOs,
+        Architecture architecture)
     {
         var github = JsonSerializer.Deserialize<GitHubReleaseInfo>(text, JsonOptions);
         if (!string.IsNullOrWhiteSpace(github?.TagName))
         {
+            var assetName = ReleaseAssetNameFor(targetOs, architecture);
+            var assetUrl = github.Assets?
+                .FirstOrDefault(asset => string.Equals(asset.Name, assetName, StringComparison.Ordinal))
+                ?.BrowserDownloadUrl;
             return new PerfectCommsUpdateInfo
             {
                 Enabled = true,
                 LatestVersion = github.TagName,
                 Title = "Perfect Comms update available",
                 Message = "Click here to download the latest Perfect Comms release.",
-                ReleaseUrl = string.IsNullOrWhiteSpace(github.HtmlUrl) ? GitHubReleasesUrl : github.HtmlUrl,
+                ReleaseUrl = !string.IsNullOrWhiteSpace(assetUrl)
+                    ? assetUrl
+                    : string.IsNullOrWhiteSpace(github.HtmlUrl) ? GitHubReleasesUrl : github.HtmlUrl,
                 ShowEveryMainMenu = false,
             };
         }
 
         return JsonSerializer.Deserialize<PerfectCommsUpdateInfo>(text, JsonOptions);
+    }
+
+    internal static string? ReleaseAssetNameFor(string? targetOs, Architecture architecture)
+        => (targetOs, architecture) switch
+        {
+            ("win", Architecture.X64) => "PerfectComms-win.dll",
+            ("linux", Architecture.X64) => "PerfectComms-linux.dll",
+            ("mac", Architecture.X64 or Architecture.Arm64) => "PerfectComms-mac.dll",
+            _ => null,
+        };
+
+    private static string? CurrentTargetOs()
+        => TargetOsFor(
+            WineEnvironment.IsWine,
+            WineEnvironment.HostOs,
+            RuntimeInformation.IsOSPlatform(OSPlatform.Windows),
+            RuntimeInformation.IsOSPlatform(OSPlatform.Linux),
+            RuntimeInformation.IsOSPlatform(OSPlatform.OSX));
+
+    internal static string? TargetOsFor(
+        bool wine,
+        WineHostOs wineHostOs,
+        bool windows,
+        bool linux,
+        bool macOs)
+    {
+        if (wine)
+        {
+            return wineHostOs switch
+            {
+                WineHostOs.Linux => "linux",
+                WineHostOs.MacOS => "mac",
+                _ => null,
+            };
+        }
+
+        return windows ? "win"
+            : macOs ? "mac"
+            : linux ? "linux"
+            : null;
     }
 
     private static int CompareVersions(string left, string right)

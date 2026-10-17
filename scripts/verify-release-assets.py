@@ -2251,61 +2251,59 @@ def verify_starlight_dll(path: Path) -> None:
     print(f"release.asset.ok target=starlight format=single-managed-dll path={path}")
 
 
-def verify_desktop(root: Path) -> None:
-    pe_assets = (
-        ("Libs/pc-capture/pc-capture-win-x64.exe", PE_AMD64),
-        ("Libs/dsp/webrtc-apm.x64.dll", PE_AMD64),
-    )
-    elf_assets = (
-        "Libs/pc-capture/pc-capture-linux-x64",
-        "Libs/dsp/libwebrtc-apm.so",
-    )
-    for relative, machine in pe_assets:
+def verify_desktop(root: Path, target_os: str) -> None:
+    if target_os == "win":
+        for relative in (
+            "Libs/pc-capture/pc-capture-win-x64.exe",
+            "Libs/dsp/webrtc-apm.x64.dll",
+        ):
+            path = require_file(root, relative)
+            assert_pe(path, PE_AMD64)
+            assert_no_private_windows_runtime(path)
+            if relative.startswith("Libs/pc-capture/"):
+                assert_audio_contract_executable_bytes(path.read_bytes(), str(path))
+            print(f"release.asset.ok format=pe machine=0x{PE_AMD64:04x} path={relative}")
+        relative = "Libs/pion/pc-pion.x64.dll"
         path = require_file(root, relative)
-        assert_pe(path, machine)
-        assert_no_private_windows_runtime(path)
-        if relative.startswith("Libs/pc-capture/"):
-            assert_audio_contract_executable_bytes(path.read_bytes(), str(path))
-        print(f"release.asset.ok format=pe machine=0x{machine:04x} path={relative}")
-    for relative in elf_assets:
-        path = require_file(root, relative)
-        assert_elf(path, ELF_X86_64)
-        if relative == "Libs/pc-capture/pc-capture-linux-x64":
-            assert_linux_cubeb_runtime_bytes(path.read_bytes(), str(path))
-            assert_audio_contract_executable_bytes(path.read_bytes(), str(path))
-        print(f"release.asset.ok format=elf64 machine=x86_64 path={relative}")
-    pion_pe_assets = (
-        ("Libs/pion/pc-pion.x64.dll", PE_AMD64),
-    )
-    for relative, machine in pion_pe_assets:
-        path = require_file(root, relative)
-        assert_pion_pe(path, machine)
+        assert_pion_pe(path, PE_AMD64)
         assert_no_private_windows_runtime(path)
         print(
-            f"release.asset.ok format=pe-dll machine=0x{machine:04x} "
+            f"release.asset.ok format=pe-dll machine=0x{PE_AMD64:04x} "
             f"transport=pion abi={PION_ABI_EXPECTED} pion={PION_VERSION_EXPECTED} "
             f"path={relative}"
         )
-    pion_elf_relative = "Libs/pion/libpc-pion.linux-x64.so"
-    assert_pion_elf(require_file(root, pion_elf_relative), ELF_X86_64)
-    print(
-        "release.asset.ok format=elf64-shared machine=x86_64 "
-        f"transport=pion abi={PION_ABI_EXPECTED} pion={PION_VERSION_EXPECTED} "
-        f"path={pion_elf_relative}"
-    )
-    mac_zip = require_file(root, "Libs/pc-capture/pc-capture-mac.zip")
-    assert_mac_bundle(mac_zip)
-    print(
-        "release.asset.ok target=macos format=app-zip architectures=x86_64,arm64 "
-        f"transport=pion abi={PION_ABI_EXPECTED} pion={PION_VERSION_EXPECTED} "
-        "path=Libs/pc-capture/pc-capture-mac.zip"
-    )
+    elif target_os == "linux":
+        for relative in (
+            "Libs/pc-capture/pc-capture-linux-x64",
+            "Libs/dsp/libwebrtc-apm.so",
+        ):
+            path = require_file(root, relative)
+            assert_elf(path, ELF_X86_64)
+            if relative.startswith("Libs/pc-capture/"):
+                assert_linux_cubeb_runtime_bytes(path.read_bytes(), str(path))
+                assert_audio_contract_executable_bytes(path.read_bytes(), str(path))
+            print(f"release.asset.ok format=elf64 machine=x86_64 path={relative}")
+        relative = "Libs/pion/libpc-pion.linux-x64.so"
+        assert_pion_elf(require_file(root, relative), ELF_X86_64)
+        print(
+            "release.asset.ok format=elf64-shared machine=x86_64 "
+            f"transport=pion abi={PION_ABI_EXPECTED} pion={PION_VERSION_EXPECTED} "
+            f"path={relative}"
+        )
+    else:
+        relative = "Libs/pc-capture/pc-capture-mac.zip"
+        assert_mac_bundle(require_file(root, relative))
+        print(
+            "release.asset.ok target=macos format=app-zip architectures=x86_64,arm64 "
+            f"transport=pion abi={PION_ABI_EXPECTED} pion={PION_VERSION_EXPECTED} "
+            f"path={relative}"
+        )
 
 
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--root", type=Path, default=Path(__file__).resolve().parents[1])
-    parser.add_argument("--configuration", choices=("Release", "Windows"))
+    parser.add_argument("--target-os", choices=("win", "linux", "mac"))
     parser.add_argument(
         "--self-test",
         action="store_true",
@@ -2354,7 +2352,7 @@ def main() -> int:
     root = args.root.resolve()
     try:
         selected_modes = (
-            int(args.configuration is not None)
+            int(args.target_os is not None)
             + int(args.self_test)
             + int(args.pe_no_private_runtime is not None)
             + int(args.elf_cubeb_runtime is not None)
@@ -2367,7 +2365,7 @@ def main() -> int:
             fail("verification modes cannot be combined")
         if args.self_test:
             if (
-                args.configuration is not None
+                args.target_os is not None
                 or args.pe_no_private_runtime
                 or args.elf_cubeb_runtime
                 or args.mac_bundle
@@ -2381,7 +2379,7 @@ def main() -> int:
             verify_starlight_dll(args.starlight_dll.resolve())
         elif args.pe_no_private_runtime is not None:
             if (
-                args.configuration is not None
+                args.target_os is not None
                 or args.elf_cubeb_runtime
                 or args.mac_bundle
                 or args.helper_build_info
@@ -2394,7 +2392,7 @@ def main() -> int:
             print(f"release.asset.ok target=windows compiler_runtime=self-contained path={helper}")
         elif args.elf_cubeb_runtime is not None:
             if (
-                args.configuration is not None
+                args.target_os is not None
                 or args.mac_bundle
                 or args.helper_build_info
             ):
@@ -2413,7 +2411,7 @@ def main() -> int:
             )
         elif args.mac_bundle is not None:
             if (
-                args.configuration is not None
+                args.target_os is not None
                 or args.helper_build_info
             ):
                 fail("--mac-bundle cannot be combined with other verification modes")
@@ -2426,7 +2424,7 @@ def main() -> int:
                 f"cubeb=static path={bundle}"
             )
         elif args.helper_build_info is not None:
-            if args.configuration is not None:
+            if args.target_os is not None:
                 fail("--helper-build-info cannot be combined with other verification modes")
             helper = args.helper_build_info.resolve()
             if not helper.is_file() or helper.stat().st_size == 0:
@@ -2436,12 +2434,12 @@ def main() -> int:
                 "release.asset.ok audio_engine=cubeb "
                 f"cubeb={CUBEB_VERSION_EXPECTED} protocol={args.expected_protocol} path={helper}"
             )
-        elif args.configuration is None:
-            fail("--configuration is required unless --self-test is used")
+        elif args.target_os is None:
+            fail("--target-os is required unless --self-test is used")
         else:
-            verify_desktop(root)
+            verify_desktop(root, args.target_os)
     except (OSError, ValueError) as error:
-        print(f"release.asset.invalid configuration={args.configuration} error={error}", file=sys.stderr)
+        print(f"release.asset.invalid target_os={args.target_os} error={error}", file=sys.stderr)
         return 1
     return 0
 

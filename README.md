@@ -125,11 +125,11 @@ The Starlight tester build uses in-game touch controls instead of desktop keybin
 >
 > 1. Close Among Us.
 > 2. Keep the BepInEx installation supplied by the mod or modpack. **Do not install or merge another copy over it.**
-> 3. Download `PerfectComms.dll` from the [latest release](https://github.com/artriy/Perfect-Comms/releases/latest).
-> 4. Place or replace the DLL in `BepInEx/plugins`.
+> 3. Download the DLL for your operating system from the [latest release](https://github.com/artriy/Perfect-Comms/releases/latest): `PerfectComms-win.dll` for Windows, `PerfectComms-linux.dll` for Linux, or `PerfectComms-mac.dll` for macOS.
+> 4. Replace the previous Perfect Comms DLL in `BepInEx/plugins` with this one (remove an older `PerfectComms.dll` to avoid loading both). Keep the new release filename; the plugin and assembly identity remain `PerfectComms`.
 
 > [!IMPORTANT]
-> **Desktop: if BepInEx is not provided**
+> **Windows: if BepInEx is not provided**
 >
 > Use this path if your mod does not provide BepInEx, or if you are not using another mod.
 >
@@ -137,14 +137,14 @@ The Starlight tester build uses in-game touch controls instead of desktop keybin
 > 2. Choose `Unity.IL2CPP-win-x64`.
 > 3. Extract BepInEx into the folder containing `Among Us.exe`.
 > 4. Launch the game once to complete BepInEx setup, then close it.
-> 5. Download `PerfectComms.dll` from the [latest release](https://github.com/artriy/Perfect-Comms/releases/latest) and place it in `BepInEx/plugins`.
+> 5. Download `PerfectComms-win.dll` from the [latest release](https://github.com/artriy/Perfect-Comms/releases/latest) and place it in `BepInEx/plugins`.
 
 ### Desktop folder layout
 
 ```text
 BepInEx/
 └─ plugins/
-   └─ PerfectComms.dll
+   └─ PerfectComms-<your-os>.dll
 ```
 
 ### Android on Starlight

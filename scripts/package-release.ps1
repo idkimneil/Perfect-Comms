@@ -4,6 +4,8 @@
 param(
     [ValidateSet("All", "Release", "Windows")]
     [string]$Configuration = "All",
+    [ValidateSet("All", "win", "linux", "mac")]
+    [string]$TargetOs = "win",
     [string]$Version,
     [int]$SidecarProtocolVersion = 0
 )
@@ -11,15 +13,22 @@ param(
 $ErrorActionPreference = "Stop"
 
 if ($Configuration -eq "All") {
-    & $PSCommandPath -Configuration Release -Version $Version -SidecarProtocolVersion $SidecarProtocolVersion
-    & $PSCommandPath -Configuration Windows -Version $Version -SidecarProtocolVersion $SidecarProtocolVersion
+    & $PSCommandPath -Configuration Release -TargetOs $TargetOs -Version $Version -SidecarProtocolVersion $SidecarProtocolVersion
+    & $PSCommandPath -Configuration Windows -TargetOs $TargetOs -Version $Version -SidecarProtocolVersion $SidecarProtocolVersion
+    return
+}
+
+if ($TargetOs -eq "All") {
+    foreach ($target in @("win", "linux", "mac")) {
+        & $PSCommandPath -Configuration $Configuration -TargetOs $target -Version $Version -SidecarProtocolVersion $SidecarProtocolVersion
+    }
     return
 }
 
 $root = Resolve-Path (Join-Path $PSScriptRoot "..")
 $project = Join-Path $root "PerfectComms.csproj"
 $dll = Join-Path $root "bin\$Configuration\net6.0\PerfectComms.dll"
-$releaseDllName = "PerfectComms.dll"
+$releaseDllName = "PerfectComms-$TargetOs.dll"
 $releaseDll = Join-Path $root "artifacts\$releaseDllName"
 
 function Write-ArtifactHash([string]$Path) {
@@ -59,15 +68,15 @@ function Assert-HelperProtocol([string]$RelativePath, [string]$ExpectedProtocol)
     Write-Host "release.package.helper_protocol path=$RelativePath protocol=$actual"
 }
 
-function Assert-NativeAssetLayouts([string]$BuildConfiguration) {
+function Assert-NativeAssetLayouts([string]$BuildTargetOs) {
     $python = Get-Command python -ErrorAction SilentlyContinue
     if (-not $python) { $python = Get-Command python3 -ErrorAction SilentlyContinue }
     if (-not $python) {
         throw "Python 3 is required to verify native release asset formats and architectures."
     }
-    & $python.Source (Join-Path $root "scripts\verify-release-assets.py") --root $root --configuration $BuildConfiguration
+    & $python.Source (Join-Path $root "scripts\verify-release-assets.py") --root $root --target-os $BuildTargetOs
     if ($LASTEXITCODE -ne 0) {
-        throw "native release asset format/architecture validation failed for $BuildConfiguration"
+        throw "native release asset format/architecture validation failed for $BuildTargetOs"
     }
 }
 
@@ -93,17 +102,29 @@ if ($SidecarProtocolVersion -gt 0 -and $SidecarProtocolVersion.ToString() -ne $m
 }
 Write-Host "release.package.protocol network=$networkProtocol sidecar=$managedSidecarProtocol requested_sidecar=$SidecarProtocolVersion"
 
-@(
-    "Libs\pc-capture\pc-capture-win-x64.exe",
-    "Libs\pc-capture\pc-capture-linux-x64",
-    "Libs\pc-capture\pc-capture-mac.zip",
-    "Libs\dsp\webrtc-apm.x64.dll",
-    "Libs\dsp\libwebrtc-apm.so",
-    "Libs\pion\pc-pion.x64.dll",
-    "Libs\pion\libpc-pion.linux-x64.so"
-) | ForEach-Object { Assert-ReleaseAsset $_ }
-Assert-HelperProtocol "Libs\pc-capture\pc-capture-win-x64.exe" $managedSidecarProtocol
-Assert-NativeAssetLayouts $Configuration
+switch ($TargetOs) {
+    "win" {
+        @(
+            "Libs\pc-capture\pc-capture-win-x64.exe",
+            "Libs\dsp\webrtc-apm.x64.dll",
+            "Libs\pion\pc-pion.x64.dll"
+        ) | ForEach-Object { Assert-ReleaseAsset $_ }
+    }
+    "linux" {
+        @(
+            "Libs\pc-capture\pc-capture-linux-x64",
+            "Libs\dsp\libwebrtc-apm.so",
+            "Libs\pion\libpc-pion.linux-x64.so"
+        ) | ForEach-Object { Assert-ReleaseAsset $_ }
+    }
+    "mac" {
+        Assert-ReleaseAsset "Libs\pc-capture\pc-capture-mac.zip"
+    }
+}
+if ($TargetOs -eq "win") {
+    Assert-HelperProtocol "Libs\pc-capture\pc-capture-win-x64.exe" $managedSidecarProtocol
+}
+Assert-NativeAssetLayouts $TargetOs
 
 if ($Version) {
     if ($Version -notmatch '^\d+\.\d+\.\d+$') { throw "Version must be X.Y.Z (got '$Version')" }
@@ -128,7 +149,7 @@ if ($csprojVersion -and $pluginVersion -ne $csprojVersion) {
     Write-Host "release.package.version_ok VoiceChatPluginMain.cs=$pluginVersion"
 }
 
-$buildOutput = & dotnet build $project -c $Configuration --nologo --no-incremental -p:RestoreLockedMode=true -p:ValidateReleaseAssets=true 2>&1
+$buildOutput = & dotnet build $project -c $Configuration --nologo --no-incremental -p:RestoreLockedMode=true -p:ValidateReleaseAssets=true "-p:TargetOs=$TargetOs" 2>&1
 $buildExit = $LASTEXITCODE
 $buildOutput | ForEach-Object { Write-Host $_ }
 if ($buildExit -ne 0) { throw "dotnet build failed with exit code $buildExit" }
@@ -136,14 +157,14 @@ $warningCount = @($buildOutput | Select-String -Pattern "warning ").Count
 Write-Host "release.package.build_ok configuration=$Configuration warnings=$warningCount"
 
 $helperResourceTest = & dotnet test (Join-Path $root "PerfectComms.Tests\PerfectComms.Tests.csproj") `
-    -c $Configuration --nologo --filter "FullyQualifiedName~EmbeddedDesktopHelpersMatchStagedFiles" `
-    -p:RestoreLockedMode=true -p:ValidateReleaseAssets=true 2>&1
+    -c $Configuration --nologo --filter "FullyQualifiedName~EmbeddedDesktopHelpersMatchStagedFiles|FullyQualifiedName~EmbeddedManagedDependenciesTests" `
+    -p:RestoreLockedMode=true -p:ValidateReleaseAssets=true "-p:TargetOs=$TargetOs" 2>&1
 $helperResourceTestExit = $LASTEXITCODE
 $helperResourceTest | ForEach-Object { Write-Host $_ }
 if ($helperResourceTestExit -ne 0) {
     throw "embedded native helper verification failed with exit code $helperResourceTestExit"
 }
-Write-Host "release.package.embedded_helpers_match configuration=$Configuration"
+Write-Host "release.package.embedded_helpers_match target_os=$TargetOs configuration=$Configuration"
 
 & (Join-Path $root "scripts\package-api.ps1") -Configuration $Configuration
 if ($LASTEXITCODE -ne 0) {

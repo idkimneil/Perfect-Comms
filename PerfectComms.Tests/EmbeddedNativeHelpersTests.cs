@@ -11,26 +11,59 @@ public sealed class EmbeddedNativeHelpersTests
     public void EmbeddedDesktopHelpersMatchStagedFiles()
     {
         var repositoryRoot = FindRepositoryRoot();
-        var helpers = new[]
+        var nativePayloads = new[]
         {
-            new HelperResource(
+            new NativePayload(
                 "Lib.pc-capture.pc-capture-win-x64.exe",
                 Path.Combine(repositoryRoot, "Libs", "pc-capture", "pc-capture-win-x64.exe")),
-            new HelperResource(
+            new NativePayload(
                 "Lib.pc-capture.pc-capture-linux-x64",
                 Path.Combine(repositoryRoot, "Libs", "pc-capture", "pc-capture-linux-x64")),
-            new HelperResource(
+            new NativePayload(
                 "Lib.pc-capture.pc-capture-mac.zip",
                 Path.Combine(repositoryRoot, "Libs", "pc-capture", "pc-capture-mac.zip")),
+            new NativePayload(
+                "Lib.dsp.webrtc-apm.x64.dll",
+                Path.Combine(repositoryRoot, "Libs", "dsp", "webrtc-apm.x64.dll")),
+            new NativePayload(
+                "Lib.dsp.libwebrtc-apm.so",
+                Path.Combine(repositoryRoot, "Libs", "dsp", "libwebrtc-apm.so")),
+            new NativePayload(
+                "Lib.pc-pion.pc-pion.x64.dll",
+                Path.Combine(repositoryRoot, "Libs", "pion", "pc-pion.x64.dll")),
+            new NativePayload(
+                "Lib.pc-pion.libpc-pion.linux-x64.so",
+                Path.Combine(repositoryRoot, "Libs", "pion", "libpc-pion.linux-x64.so")),
         };
+#if TARGET_OS_WIN
+        var expectedResources = new[]
+        {
+            "Lib.pc-capture.pc-capture-win-x64.exe",
+            "Lib.dsp.webrtc-apm.x64.dll",
+            "Lib.pc-pion.pc-pion.x64.dll",
+        };
+#elif TARGET_OS_LINUX
+        var expectedResources = new[]
+        {
+            "Lib.pc-capture.pc-capture-linux-x64",
+            "Lib.dsp.libwebrtc-apm.so",
+            "Lib.pc-pion.libpc-pion.linux-x64.so",
+        };
+#elif TARGET_OS_MAC
+        var expectedResources = new[]
+        {
+            "Lib.pc-capture.pc-capture-mac.zip",
+        };
+#else
+#error TargetOs must be one of: win, linux, mac.
+#endif
 
         var pluginAssembly = typeof(VoiceLobbyRegistryPublisher).Assembly;
         var embeddedResources = pluginAssembly
             .GetManifestResourceNames()
             .ToHashSet(StringComparer.Ordinal);
 
-        // Keep the test matrix coupled to every target accepted by SidecarLauncher. Both macOS
-        // architectures intentionally share the signed universal app archive.
+        // Both macOS architectures intentionally share the signed universal app archive.
         foreach (string triple in new[]
                  {
                      "x86_64-pc-windows-msvc",
@@ -40,15 +73,30 @@ public sealed class EmbeddedNativeHelpersTests
                  })
         {
             string resourceName = SidecarLauncher.ResourceName(triple);
-            Assert.Contains(helpers, helper => helper.ResourceName == resourceName);
+            Assert.Contains(nativePayloads, payload => payload.ResourceName == resourceName);
         }
 
-        // Ordinary managed-only builds intentionally allow Linux/macOS release assets to be
-        // absent. Presence must nevertheless agree in both directions: a newly staged helper must
-        // be embedded, and a removed helper must not survive in an incremental plugin assembly.
-        foreach (var helper in helpers)
-            AssertEmbeddedFileParity(pluginAssembly, embeddedResources, helper);
+        var expectedEmbeddedResources = nativePayloads
+            .Where(payload => expectedResources.Contains(payload.ResourceName, StringComparer.Ordinal))
+            .Where(payload => File.Exists(payload.StagedPath))
+            .Select(payload => payload.ResourceName)
+            .OrderBy(name => name, StringComparer.Ordinal)
+            .ToArray();
+        var embeddedNativeResources = embeddedResources
+            .Where(name => name.StartsWith("Lib.pc-capture.", StringComparison.Ordinal)
+                           || name.StartsWith("Lib.dsp.", StringComparison.Ordinal)
+                           || name.StartsWith("Lib.pc-pion.", StringComparison.Ordinal))
+            .OrderBy(name => name, StringComparer.Ordinal)
+            .ToArray();
+        Assert.Equal(expectedEmbeddedResources, embeddedNativeResources);
 
+        foreach (var payload in nativePayloads)
+        {
+            if (expectedResources.Contains(payload.ResourceName, StringComparer.Ordinal))
+                AssertEmbeddedFileParity(pluginAssembly, embeddedResources, payload);
+            else
+                Assert.DoesNotContain(payload.ResourceName, embeddedResources);
+        }
     }
 
     [Theory]
@@ -138,7 +186,7 @@ public sealed class EmbeddedNativeHelpersTests
     private static void AssertEmbeddedFileParity(
         System.Reflection.Assembly pluginAssembly,
         IReadOnlySet<string> embeddedResources,
-        HelperResource helper)
+        NativePayload helper)
     {
         bool stagedExists = File.Exists(helper.StagedPath);
         bool embeddedExists = embeddedResources.Contains(helper.ResourceName);
@@ -216,5 +264,5 @@ public sealed class EmbeddedNativeHelpersTests
             $"Could not locate PerfectComms.csproj above {AppContext.BaseDirectory}.");
     }
 
-    private sealed record HelperResource(string ResourceName, string StagedPath);
+    private sealed record NativePayload(string ResourceName, string StagedPath);
 }

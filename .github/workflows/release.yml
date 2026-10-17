@@ -101,8 +101,11 @@ jobs:
           cp dl/pion-win-x64/pc-pion.x64.dll Libs/pion/
           cp dl/pion-linux-x64/libpc-pion.so Libs/pion/libpc-pion.linux-x64.so
           # The universal macOS Pion dylib is sealed inside the signed helper app.
-      - name: Package desktop DLL
-        run: bash scripts/package-release.sh Release
+      - name: Package platform-specific desktop DLLs
+        run: |
+          bash scripts/package-release.sh Release win
+          bash scripts/package-release.sh Release linux
+          bash scripts/package-release.sh Release mac
       - name: Build and validate Starlight tester DLL
         run: |
           bash scripts/package-starlight.sh Release
@@ -113,7 +116,7 @@ jobs:
           shopt -s nocaseglob nullglob
           for artifact in artifacts/*.dll artifacts/*.zip; do
             case "$artifact" in
-              artifacts/PerfectComms.dll|artifacts/PerfectCommsStarlight.dll) ;;
+              artifacts/PerfectComms-win.dll|artifacts/PerfectComms-linux.dll|artifacts/PerfectComms-mac.dll|artifacts/PerfectCommsStarlight.dll) ;;
               *)
                 echo "Unexpected DLL or archive artifact: $artifact" >&2
                 exit 1
@@ -125,7 +128,9 @@ jobs:
         with:
           name: PerfectComms-standalone-dlls-${{ github.run_id }}-${{ github.run_attempt }}
           path: |
-            artifacts/PerfectComms.dll
+            artifacts/PerfectComms-win.dll
+            artifacts/PerfectComms-linux.dll
+            artifacts/PerfectComms-mac.dll
           if-no-files-found: error
           retention-days: 14
       - name: Upload Starlight tester DLL
@@ -189,7 +194,9 @@ jobs:
           set -euo pipefail
           api_package_version="$(sed -n 's:.*<PerfectCommsApiPackageVersion>\([^<]*\)</PerfectCommsApiPackageVersion>.*:\1:p' PerfectComms.csproj | head -n1)"
           api_package="artifacts/PerfectComms.Api.$api_package_version.nupkg"
-          test -s artifacts/PerfectComms.dll
+          test -s artifacts/PerfectComms-win.dll
+          test -s artifacts/PerfectComms-linux.dll
+          test -s artifacts/PerfectComms-mac.dll
           test -s "$api_package"
           python3 scripts/verify-nuget-package.py "$api_package" --expected-version "$api_package_version"
           echo "PERFECT_COMMS_API_PACKAGE=$api_package" >> "$GITHUB_ENV"
@@ -199,7 +206,9 @@ jobs:
           name: Perfect Comms ${{ github.ref_name }}
           body_path: release-notes.md
           files: |
-            artifacts/PerfectComms.dll
+            artifacts/PerfectComms-win.dll
+            artifacts/PerfectComms-linux.dll
+            artifacts/PerfectComms-mac.dll
       - name: Authenticate to NuGet.org
         id: nuget-login
         uses: NuGet/login@8d196754b4036150537f80ac539e15c2f1028841 # v1.2.0

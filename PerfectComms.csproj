@@ -14,6 +14,7 @@
 		<FileVersion>4.1.11.0</FileVersion>
 		<InformationalVersion>4.1.11</InformationalVersion>
 		<AmongUsGameLibsVersion Condition="'$(AmongUsGameLibsVersion)' == ''">2026.9.29</AmongUsGameLibsVersion>
+		<TargetOs Condition="'$(TargetOs)' == ''">win</TargetOs>
 		<LangVersion>preview</LangVersion>
 		<Nullable>enable</Nullable>
 		<AllowUnsafeBlocks>true</AllowUnsafeBlocks>
@@ -36,6 +37,11 @@
 	<PropertyGroup>
 		<DefineConstants>$(DefineConstants);WINDOWS</DefineConstants>
 	</PropertyGroup>
+
+	<Target Name="ValidateTargetOs" BeforeTargets="PrepareResources"
+		Condition="'$(TargetOs)' != 'win' and '$(TargetOs)' != 'linux' and '$(TargetOs)' != 'mac'">
+		<Error Text="TargetOs must be one of: win, linux, mac (got '$(TargetOs)')." />
+	</Target>
 
 	<ItemGroup>
 		<!-- 735 is the newest pinned runtime compatible with the current official
@@ -60,22 +66,22 @@
 	</ItemGroup>
 
 	<ItemGroup>
-		<EmbeddedResource Include="Libs\pc-capture\pc-capture-win-x64.exe" Condition="Exists('Libs\pc-capture\pc-capture-win-x64.exe')">
+		<EmbeddedResource Include="Libs\pc-capture\pc-capture-win-x64.exe" Condition="'$(TargetOs)' == 'win' and Exists('Libs\pc-capture\pc-capture-win-x64.exe')">
 			<LogicalName>Lib.pc-capture.pc-capture-win-x64.exe</LogicalName>
 		</EmbeddedResource>
-		<EmbeddedResource Include="Libs\pc-capture\pc-capture-linux-x64" Condition="Exists('Libs\pc-capture\pc-capture-linux-x64')">
+		<EmbeddedResource Include="Libs\pc-capture\pc-capture-linux-x64" Condition="'$(TargetOs)' == 'linux' and Exists('Libs\pc-capture\pc-capture-linux-x64')">
 			<LogicalName>Lib.pc-capture.pc-capture-linux-x64</LogicalName>
 		</EmbeddedResource>
-		<EmbeddedResource Include="Libs\pc-capture\pc-capture-mac.zip" Condition="Exists('Libs\pc-capture\pc-capture-mac.zip')">
+		<EmbeddedResource Include="Libs\pc-capture\pc-capture-mac.zip" Condition="'$(TargetOs)' == 'mac' and Exists('Libs\pc-capture\pc-capture-mac.zip')">
 			<LogicalName>Lib.pc-capture.pc-capture-mac.zip</LogicalName>
 		</EmbeddedResource>
 	</ItemGroup>
 
 	<ItemGroup>
-		<EmbeddedResource Include="Libs\dsp\webrtc-apm.x64.dll" Condition="Exists('Libs\dsp\webrtc-apm.x64.dll')">
+		<EmbeddedResource Include="Libs\dsp\webrtc-apm.x64.dll" Condition="'$(TargetOs)' == 'win' and Exists('Libs\dsp\webrtc-apm.x64.dll')">
 			<LogicalName>Lib.dsp.webrtc-apm.x64.dll</LogicalName>
 		</EmbeddedResource>
-		<EmbeddedResource Include="Libs\dsp\libwebrtc-apm.so" Condition="Exists('Libs\dsp\libwebrtc-apm.so')">
+		<EmbeddedResource Include="Libs\dsp\libwebrtc-apm.so" Condition="'$(TargetOs)' == 'linux' and Exists('Libs\dsp\libwebrtc-apm.so')">
 			<LogicalName>Lib.dsp.libwebrtc-apm.so</LogicalName>
 		</EmbeddedResource>
 		<!-- The macOS APM library is already sealed inside the deep-signed helper app. Embedding the
@@ -108,10 +114,10 @@
 
 	<!-- Pion WebRTC v4 is loaded dynamically by the Rust transport facade. -->
 	<ItemGroup>
-		<EmbeddedResource Include="Libs\pion\pc-pion.x64.dll" Condition="Exists('Libs\pion\pc-pion.x64.dll')">
+		<EmbeddedResource Include="Libs\pion\pc-pion.x64.dll" Condition="'$(TargetOs)' == 'win' and Exists('Libs\pion\pc-pion.x64.dll')">
 			<LogicalName>Lib.pc-pion.pc-pion.x64.dll</LogicalName>
 		</EmbeddedResource>
-		<EmbeddedResource Include="Libs\pion\libpc-pion.linux-x64.so" Condition="Exists('Libs\pion\libpc-pion.linux-x64.so')">
+		<EmbeddedResource Include="Libs\pion\libpc-pion.linux-x64.so" Condition="'$(TargetOs)' == 'linux' and Exists('Libs\pion\libpc-pion.linux-x64.so')">
 			<LogicalName>Lib.pc-pion.libpc-pion.linux-x64.so</LogicalName>
 		</EmbeddedResource>
 	</ItemGroup>
@@ -121,13 +127,13 @@
 	     complete platform set so a partial local helper cannot produce a green release. -->
 	<Target Name="AssertDesktopReleaseAssets" BeforeTargets="PrepareResources"
 		Condition="'$(ValidateReleaseAssets)' == 'true'">
-		<Error Condition="!Exists('Libs\pc-capture\pc-capture-win-x64.exe')" Text="Missing release helper: Libs\pc-capture\pc-capture-win-x64.exe" />
-		<Error Condition="!Exists('Libs\pc-capture\pc-capture-linux-x64')" Text="Missing release helper: Libs\pc-capture\pc-capture-linux-x64" />
-		<Error Condition="!Exists('Libs\pc-capture\pc-capture-mac.zip')" Text="Missing release helper: Libs\pc-capture\pc-capture-mac.zip" />
-		<Error Condition="!Exists('Libs\dsp\webrtc-apm.x64.dll')" Text="Missing release DSP: Libs\dsp\webrtc-apm.x64.dll" />
-		<Error Condition="!Exists('Libs\dsp\libwebrtc-apm.so')" Text="Missing release DSP: Libs\dsp\libwebrtc-apm.so" />
-		<Error Condition="!Exists('Libs\pion\pc-pion.x64.dll')" Text="Missing release Pion transport: Libs\pion\pc-pion.x64.dll" />
-		<Error Condition="!Exists('Libs\pion\libpc-pion.linux-x64.so')" Text="Missing release Pion transport: Libs\pion\libpc-pion.linux-x64.so" />
+		<Error Condition="'$(TargetOs)' == 'win' and !Exists('Libs\pc-capture\pc-capture-win-x64.exe')" Text="Missing release helper: Libs\pc-capture\pc-capture-win-x64.exe" />
+		<Error Condition="'$(TargetOs)' == 'win' and !Exists('Libs\dsp\webrtc-apm.x64.dll')" Text="Missing release DSP: Libs\dsp\webrtc-apm.x64.dll" />
+		<Error Condition="'$(TargetOs)' == 'win' and !Exists('Libs\pion\pc-pion.x64.dll')" Text="Missing release Pion transport: Libs\pion\pc-pion.x64.dll" />
+		<Error Condition="'$(TargetOs)' == 'linux' and !Exists('Libs\pc-capture\pc-capture-linux-x64')" Text="Missing release helper: Libs\pc-capture\pc-capture-linux-x64" />
+		<Error Condition="'$(TargetOs)' == 'linux' and !Exists('Libs\dsp\libwebrtc-apm.so')" Text="Missing release DSP: Libs\dsp\libwebrtc-apm.so" />
+		<Error Condition="'$(TargetOs)' == 'linux' and !Exists('Libs\pion\libpc-pion.linux-x64.so')" Text="Missing release Pion transport: Libs\pion\libpc-pion.linux-x64.so" />
+		<Error Condition="'$(TargetOs)' == 'mac' and !Exists('Libs\pc-capture\pc-capture-mac.zip')" Text="Missing release helper: Libs\pc-capture\pc-capture-mac.zip" />
 	</Target>
 
 	<ItemGroup>

@@ -16,10 +16,21 @@
 		<NuGetAuditLevel>low</NuGetAuditLevel>
 		<WarningsAsErrors>$(WarningsAsErrors);NU1900;NU1901;NU1902;NU1903;NU1904</WarningsAsErrors>
 		<AmongUsGameLibsVersion Condition="'$(AmongUsGameLibsVersion)' == ''">2026.9.29</AmongUsGameLibsVersion>
+		<TargetOs Condition="'$(TargetOs)' == ''">win</TargetOs>
 	</PropertyGroup>
 
 	<PropertyGroup>
 		<DefineConstants>$(DefineConstants);WINDOWS</DefineConstants>
+	</PropertyGroup>
+
+	<PropertyGroup Condition="'$(TargetOs)' == 'win'">
+		<DefineConstants>$(DefineConstants);TARGET_OS_WIN</DefineConstants>
+	</PropertyGroup>
+	<PropertyGroup Condition="'$(TargetOs)' == 'linux'">
+		<DefineConstants>$(DefineConstants);TARGET_OS_LINUX</DefineConstants>
+	</PropertyGroup>
+	<PropertyGroup Condition="'$(TargetOs)' == 'mac'">
+		<DefineConstants>$(DefineConstants);TARGET_OS_MAC</DefineConstants>
 	</PropertyGroup>
 
 	<!-- Program.cs is a local legacy console harness for the retired managed

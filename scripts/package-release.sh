@@ -6,11 +6,16 @@ if [[ "$config" != "--validate-source" && "$config" != "Release" && "$config" !=
 	echo "unsupported desktop release configuration: $config (expected Release or Windows)" >&2
 	exit 1
 fi
+target_os="${2:-win}"
+if [[ "$target_os" != "win" && "$target_os" != "linux" && "$target_os" != "mac" ]]; then
+	echo "unsupported target OS: $target_os (expected win, linux, or mac)" >&2
+	exit 1
+fi
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 project="$root/PerfectComms.csproj"
 dotnet_project="$project"
 dll="$root/bin/$config/net6.0/PerfectComms.dll"
-release_dll_name="PerfectComms.dll"
+release_dll_name="PerfectComms-$target_os.dll"
 
 source_version="$(grep -m1 '<Version>' "$project" | sed -E 's/.*<Version>([^<]+)<\/Version>.*/\1/')"
 assembly_version="$(grep -m1 '<AssemblyVersion>' "$project" | sed -E 's/.*<AssemblyVersion>([^<]+)<\/AssemblyVersion>.*/\1/')"
@@ -51,31 +56,31 @@ require_nonempty() {
 	fi
 }
 
-required_desktop_assets=(
-	"Libs/pc-capture/pc-capture-win-x64.exe"
-	"Libs/pc-capture/pc-capture-linux-x64"
-	"Libs/pc-capture/pc-capture-mac.zip"
-	"Libs/dsp/webrtc-apm.x64.dll"
-	"Libs/dsp/libwebrtc-apm.so"
-	"Libs/pion/pc-pion.x64.dll"
-	"Libs/pion/libpc-pion.linux-x64.so"
-)
+case "$target_os" in
+	win)
+		required_desktop_assets=(
+			"Libs/pc-capture/pc-capture-win-x64.exe"
+			"Libs/dsp/webrtc-apm.x64.dll"
+			"Libs/pion/pc-pion.x64.dll"
+		)
+		;;
+	linux)
+		required_desktop_assets=(
+			"Libs/pc-capture/pc-capture-linux-x64"
+			"Libs/dsp/libwebrtc-apm.so"
+			"Libs/pion/libpc-pion.linux-x64.so"
+		)
+		;;
+	mac)
+		required_desktop_assets=(
+			"Libs/pc-capture/pc-capture-mac.zip"
+		)
+		;;
+esac
 for asset in "${required_desktop_assets[@]}"; do
 	require_nonempty "$root/$asset"
 done
 linux_helper="$root/Libs/pc-capture/pc-capture-linux-x64"
-# actions/download-artifact does not preserve executable permission bits.
-chmod +x "$linux_helper"
-if ! helper_protocol="$("$linux_helper" --protocol-version)"; then
-	echo "stale or incompatible release helper: Libs/pc-capture/pc-capture-linux-x64 (expected protocol $sidecar_protocol)" >&2
-	exit 1
-fi
-if [[ "$helper_protocol" != "$sidecar_protocol" ]]; then
-	echo "stale or incompatible release helper: Libs/pc-capture/pc-capture-linux-x64 (expected protocol $sidecar_protocol, got '$helper_protocol')" >&2
-	exit 1
-fi
-echo "release.package.helper_protocol path=Libs/pc-capture/pc-capture-linux-x64 protocol=$helper_protocol"
-
 if command -v python3 >/dev/null 2>&1 && python3 -c "import sys" >/dev/null 2>&1; then
 	asset_python=python3
 elif command -v python >/dev/null 2>&1 && python -c "import sys" >/dev/null 2>&1; then
@@ -84,24 +89,37 @@ else
 	echo "Python 3 is required to verify native release asset formats and architectures." >&2
 	exit 1
 fi
+if [[ "$target_os" == "linux" ]]; then
+	# actions/download-artifact does not preserve executable permission bits.
+	chmod +x "$linux_helper"
+	if ! helper_protocol="$("$linux_helper" --protocol-version)"; then
+		echo "stale or incompatible release helper: Libs/pc-capture/pc-capture-linux-x64 (expected protocol $sidecar_protocol)" >&2
+		exit 1
+	fi
+	if [[ "$helper_protocol" != "$sidecar_protocol" ]]; then
+		echo "stale or incompatible release helper: Libs/pc-capture/pc-capture-linux-x64 (expected protocol $sidecar_protocol, got '$helper_protocol')" >&2
+		exit 1
+	fi
+	echo "release.package.helper_protocol path=Libs/pc-capture/pc-capture-linux-x64 protocol=$helper_protocol"
+	"$asset_python" "$root/scripts/verify-release-assets.py" \
+		--helper-build-info "$linux_helper" \
+		--expected-protocol "$sidecar_protocol"
+fi
 "$asset_python" "$root/scripts/verify-release-assets.py" \
-	--helper-build-info "$linux_helper" \
-	--expected-protocol "$sidecar_protocol"
-"$asset_python" "$root/scripts/verify-release-assets.py" \
-	--root "$root" --configuration "$config"
+	--root "$root" --target-os "$target_os"
 
 if command -v cygpath >/dev/null 2>&1; then
 	dotnet_project="$(cygpath -w "$project")"
 fi
 
 dotnet build "$dotnet_project" -c "$config" --nologo --no-incremental \
-	-p:RestoreLockedMode=true -p:ValidateReleaseAssets=true
+	-p:RestoreLockedMode=true -p:ValidateReleaseAssets=true -p:TargetOs="$target_os"
 
 dotnet test "$root/PerfectComms.Tests/PerfectComms.Tests.csproj" \
 	-c "$config" --nologo \
-	--filter 'FullyQualifiedName~EmbeddedDesktopHelpersMatchStagedFiles' \
-	-p:RestoreLockedMode=true -p:ValidateReleaseAssets=true
-echo "release.package.embedded_helpers_match configuration=$config"
+	--filter 'FullyQualifiedName~EmbeddedDesktopHelpersMatchStagedFiles|FullyQualifiedName~EmbeddedManagedDependenciesTests' \
+	-p:RestoreLockedMode=true -p:ValidateReleaseAssets=true -p:TargetOs="$target_os"
+echo "release.package.embedded_helpers_match target_os=$target_os configuration=$config"
 
 bash "$root/scripts/package-api.sh" "$config"
 
